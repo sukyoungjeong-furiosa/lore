@@ -1,0 +1,7 @@
+[package]
+name = "lore"
+version.workspace = true
+edition.workspace = true
+description.workspace = true
+
+[dependencies]
