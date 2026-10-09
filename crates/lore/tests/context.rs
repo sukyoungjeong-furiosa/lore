@@ -207,6 +207,24 @@ fn automatic_introduction_is_once_per_document_and_explicit_access_remains_avail
 }
 
 #[test]
+fn explicit_session_identity_supports_hosts_without_a_session_id() {
+    let s = Setup::new();
+    s.scoped(PAGE);
+    let mut event = s.event("unused");
+    event.as_object_mut().unwrap().remove("session_id");
+    assert!(!s.hook(&event).status.success());
+    let introduce = || {
+        hook_documents(
+            s.start_hook(&event, &["--session", "host-session"])
+                .wait_with_output()
+                .unwrap(),
+        )
+    };
+    assert_eq!(introduce().len(), 1);
+    assert!(introduce().is_empty());
+}
+
+#[test]
 fn concurrent_introductions_and_limits_do_not_claim_unsent_documents() {
     let s = Setup::new();
     s.scoped(PAGE);

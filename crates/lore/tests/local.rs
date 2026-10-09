@@ -391,6 +391,39 @@ fn ambiguous_locations_and_links_remain_explicit() {
 }
 
 #[test]
+fn projection_search_treats_directory_names_as_literal_paths() {
+    let s = Setup::new();
+    let document = s.ok(&["create", "Scheduler"]);
+    let id = text(&document["document"], "id");
+    s.ok(&["attach", id, "compiler/scheduler.py:2-3"]);
+    std::fs::write(
+        s.repo().join("compiler/scheduler.py"),
+        "# scheduler\ndef changed():\n    return 0\n",
+    )
+    .unwrap();
+    for directory in ["compiler/*", "compiler/x"] {
+        std::fs::create_dir_all(s.repo().join(directory)).unwrap();
+        std::fs::write(
+            s.repo().join(directory).join("planner.py"),
+            "def schedule():\n    return 42\n",
+        )
+        .unwrap();
+    }
+    let found = s.ok(&["ls", "compiler/*"]);
+    assert_eq!(found["documents"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        found["documents"][0]["projections"][0]["locations"],
+        json!([{"path":"compiler/*/planner.py","start":1,"end":2}])
+    );
+    assert!(
+        found["documents"][0]["projections"][0]["alternatives"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
 fn unavailable_and_corrupt_are_not_empty_search() {
     let s = Setup::new();
     let d = s.ok(&["create", "Persisted"]);

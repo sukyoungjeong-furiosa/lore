@@ -231,7 +231,7 @@ def handle(event, session=None, limit=LIMIT):
     if event_name != 'PostToolUse':
         return None
     identity = session or json.dumps([event.get('session_id'), event.get('agent_id')])
-    if not event.get('session_id') or len(identity.encode()) > 4096:
+    if not (session or event.get('session_id')) or len(identity.encode()) > 4096:
         raise ValueError('A stable agent session identity is required')
     documents = []
     exclusions = home() / 'integrations/codex/sessions' / digest(identity) / 'introduced.json'

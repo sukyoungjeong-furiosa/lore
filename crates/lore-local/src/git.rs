@@ -177,7 +177,14 @@ impl CodeRepository for GitRepository {
             }
         }
         if requested.is_some() || paths.is_empty() {
-            let mut args = vec!["ls-files", "-co", "--exclude-standard", "-z", "--"];
+            let mut args = vec![
+                "--literal-pathspecs",
+                "ls-files",
+                "-co",
+                "--exclude-standard",
+                "-z",
+                "--",
+            ];
             if let Some(requested) = requested.filter(|path| !path.is_empty()) {
                 args.push(requested);
             }
