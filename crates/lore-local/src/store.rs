@@ -4,6 +4,7 @@ use std::path::PathBuf;
 pub struct FileRepository {
     pub directory: PathBuf,
 }
+
 impl FileRepository {
     fn path(&self, document: &DocumentId, revision: &RevisionId) -> PathBuf {
         self.directory
@@ -13,6 +14,7 @@ impl FileRepository {
             .join(format!("{revision}.json"))
     }
 }
+
 impl KnowledgeRepository for FileRepository {
     fn load(&self, document: &DocumentId, revision: &RevisionId) -> Result<Revision> {
         let path = self.path(document, revision);
@@ -36,6 +38,7 @@ impl KnowledgeRepository for FileRepository {
         }
         Ok(value)
     }
+
     fn record(&self, value: &Revision) -> Result<RevisionId> {
         use std::io::Write;
         value.document.validate()?;

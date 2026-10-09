@@ -6,6 +6,7 @@ pub struct DocumentReference {
     pub backend: String,
     pub id: String,
 }
+
 impl DocumentReference {
     pub fn validate(&self) -> Result<()> {
         if self.backend.trim().is_empty() || self.id.trim().is_empty() {

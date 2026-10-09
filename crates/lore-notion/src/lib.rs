@@ -43,6 +43,7 @@ pub struct NotionBackend {
     api_url: String,
     client: Client,
 }
+
 impl NotionBackend {
     pub fn new(identity: String, token: String, api_url: &str) -> Result<Self> {
         let url = reqwest::Url::parse(api_url).map_err(|_| Error::invalid("Invalid API URL"))?;
@@ -80,18 +81,21 @@ impl NotionBackend {
             client,
         })
     }
+
     fn reference(&self, id: &str) -> Result<DocumentReference> {
         Ok(DocumentReference {
             backend: self.identity.clone(),
             id: page_id(id)?,
         })
     }
+
     fn checked_id(&self, reference: &DocumentReference) -> Result<String> {
         if reference.backend != self.identity {
             return Err(Error::invalid("Document belongs to another backend"));
         }
         page_id(&reference.id)
     }
+
     fn request(&self, path: &str, body: Option<&Value>) -> Result<Value> {
         for attempt in 0..3 {
             let url = format!("{}{path}", self.api_url);
@@ -157,6 +161,7 @@ impl NotionBackend {
         }
         unreachable!()
     }
+
     fn listing(&self, path: &str, post: bool) -> Result<Vec<Value>> {
         let mut cursor: Option<String> = None;
         let mut visited = BTreeSet::new();
@@ -198,6 +203,7 @@ impl NotionBackend {
         }
         Ok(result)
     }
+
     fn summary(&self, page: &Value) -> Result<BackendDocument> {
         let id = text(page, "id")?;
         let properties = page["properties"]
@@ -230,6 +236,7 @@ impl NotionBackend {
             observed_revision: page["last_edited_time"].as_str().map(str::to_owned),
         })
     }
+
     fn database_pages(&self, id: &str) -> Result<Vec<BackendDocument>> {
         let database = self.request(&format!("/databases/{}", page_id(id)?), None)?;
         let sources = database["data_sources"]
@@ -245,6 +252,7 @@ impl NotionBackend {
         Ok(pages)
     }
 }
+
 impl KnowledgeBackend for NotionBackend {
     fn metadata(&self, reference: &DocumentReference) -> Result<BackendDocument> {
         let id = self.checked_id(reference)?;
@@ -257,6 +265,7 @@ impl KnowledgeBackend for NotionBackend {
         }
         Ok(document)
     }
+
     fn children(&self, reference: &DocumentReference) -> Result<DocumentListing> {
         let id = self.checked_id(reference)?;
         let mut pending = vec![id.clone()];
@@ -315,6 +324,7 @@ impl KnowledgeBackend for NotionBackend {
             warnings,
         })
     }
+
     fn read(&self, reference: &DocumentReference) -> Result<DocumentContent> {
         let id = self.checked_id(reference)?;
         let mut document = self.metadata(reference)?;
@@ -359,11 +369,13 @@ impl KnowledgeBackend for NotionBackend {
         })
     }
 }
+
 fn text<'a>(value: &'a Value, key: &str) -> Result<&'a str> {
     value[key]
         .as_str()
         .ok_or_else(|| Error::new(ErrorKind::Corrupt, format!("Notion response lacks {key}")))
 }
+
 fn notion_url(id: &str) -> String {
     format!("https://www.notion.so/{}", id.replace('-', ""))
 }

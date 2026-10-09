@@ -9,6 +9,7 @@ use std::path::PathBuf;
 pub struct FileMappingRepository {
     pub directory: PathBuf,
 }
+
 impl FileMappingRepository {
     fn path(&self, id: &MappingId, revision: &RevisionId) -> PathBuf {
         self.directory
@@ -18,6 +19,7 @@ impl FileMappingRepository {
             .join(format!("{revision}.json"))
     }
 }
+
 impl MappingRepository for FileMappingRepository {
     fn load(&self, id: &MappingId, revision: &RevisionId) -> Result<MappingRevision> {
         let bytes = std::fs::read(self.path(id, revision)).map_err(|e| {
@@ -37,6 +39,7 @@ impl MappingRepository for FileMappingRepository {
         }
         Ok(value)
     }
+
     fn record(&self, value: &MappingRevision) -> Result<RevisionId> {
         use std::io::Write;
         value.mapping.validate()?;
@@ -62,6 +65,7 @@ pub struct LocatedMapping {
     pub view: lore_core::MappingSummaryView,
     pub projections: Vec<Projection>,
 }
+
 impl Workspace {
     pub fn read_mapping(
         &self,
@@ -81,6 +85,7 @@ impl Workspace {
             record: self.mapping_repository.load(id, selected)?,
         })
     }
+
     pub fn list_mappings(&self, include_archived: bool) -> Result<Vec<MappingView>> {
         let mut views = vec![];
         for (id, active) in self.state()?.mappings {
@@ -94,6 +99,7 @@ impl Workspace {
         }
         Ok(views)
     }
+
     pub fn create_mapping(
         &self,
         document: DocumentReference,
@@ -127,6 +133,7 @@ impl Workspace {
         atomic_write(&self.state_path, &serde_json::to_vec_pretty(&state)?)?;
         Ok(MappingView { revision, record })
     }
+
     pub fn update_mapping(
         &self,
         id: &MappingId,
@@ -172,6 +179,7 @@ impl Workspace {
         atomic_write(&self.state_path, &serde_json::to_vec_pretty(&state)?)?;
         Ok(MappingView { revision, record })
     }
+
     pub fn mapping_history(&self, id: &MappingId) -> Result<Vec<MappingView>> {
         let mut result = vec![];
         let mut next = Some(self.read_mapping(id, None)?.revision);
@@ -182,6 +190,7 @@ impl Workspace {
         }
         Ok(result)
     }
+
     pub fn locate_mappings(
         &self,
         scope: Option<&str>,
@@ -218,6 +227,7 @@ impl Workspace {
         }
         Ok(result)
     }
+
     pub fn install_mapping(&self, source: &Workspace, id: &MappingId) -> Result<MappingView> {
         let view = source.read_mapping(id, None)?;
         for item in source.mapping_history(id)? {

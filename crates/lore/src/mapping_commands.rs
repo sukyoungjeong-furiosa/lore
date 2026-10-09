@@ -65,6 +65,7 @@ pub enum MapOperation {
         path: PathBuf,
     },
 }
+
 fn capture(workspace: &Workspace, location: &str) -> Result<lore_core::Anchor> {
     let (path, range) = location
         .rsplit_once(':')
@@ -79,6 +80,7 @@ fn capture(workspace: &Workspace, location: &str) -> Result<lore_core::Anchor> {
     let path = workspace.code.relative(Path::new(path))?;
     workspace.code.capture(&path, start, end)
 }
+
 pub fn print(value: &Value, command: &MapOperation) {
     match command {
         MapOperation::Ls { .. } => {
@@ -109,6 +111,7 @@ pub fn print(value: &Value, command: &MapOperation) {
         _ => println!("{}", serde_json::to_string_pretty(value).unwrap()),
     }
 }
+
 fn print_view(view: &Value) {
     let mapping = &view["record"]["mapping"];
     println!(
@@ -133,6 +136,7 @@ fn print_view(view: &Value) {
         );
     }
 }
+
 pub fn execute(
     workspace: &Workspace,
     home: &Path,
@@ -182,9 +186,10 @@ pub fn execute(
                 let reference = super::backend_commands::reference(home, backend, document)?;
                 mappings.retain(|item| item.view.record.mapping.document == reference);
             }
-            Ok(
-                json!({"mappings":mappings,"coverage":"active workspace mappings; original references and exact-text projections"}),
-            )
+            Ok(json!({
+                "mappings": mappings,
+                "coverage": "active workspace mappings; original references and exact-text projections",
+            }))
         }
         MapOperation::Show { id, revision } => Ok(serde_json::to_value(
             workspace.read_mapping(id, revision.as_ref())?,
@@ -263,10 +268,16 @@ pub fn execute(
                         || projection.possible_locations().any(|l| in_scope(&l.path));
                 }
                 if relevant {
-                    results.push(match workspace.install_mapping(&source, &view.record.mapping.id) {
-                        Ok(view) => json!({"status":"installed","view":view}),
-                        Err(error) => json!({"status":"failed","id":view.record.mapping.id,"error":{"kind":error.kind,"message":error.message}}),
-                    });
+                    results.push(
+                        match workspace.install_mapping(&source, &view.record.mapping.id) {
+                            Ok(view) => json!({"status":"installed","view":view}),
+                            Err(error) => json!({
+                                "status": "failed",
+                                "id": view.record.mapping.id,
+                                "error": {"kind": error.kind, "message": error.message},
+                            }),
+                        },
+                    );
                 }
             }
             Ok(json!({"results":results}))

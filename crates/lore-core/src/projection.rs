@@ -18,10 +18,13 @@ pub struct TargetFile {
 pub struct Projection {
     pub anchor: DocumentId,
     pub target: Vec<TargetFile>,
+    /// Locations that together form one established correspondence.
     pub locations: Vec<Location>,
+    /// Competing correspondences; each inner list is one candidate, not a confirmed result.
     pub alternatives: Vec<Vec<Location>>,
     pub explanation: String,
 }
+
 impl Projection {
     pub fn possible_locations(&self) -> impl Iterator<Item = &Location> {
         self.locations
@@ -34,6 +37,8 @@ pub trait CodeRepository {
     fn identity(&self) -> &str;
     fn head(&self) -> Option<String>;
     fn read(&self, path: &str) -> Result<Option<String>>;
+    /// Candidate paths may include the recorded path outside the requested scope.
+    /// An empty requested path denotes the whole checkout.
     fn paths(&self, anchor: &Anchor, requested: Option<&str>) -> Result<Vec<String>>;
     fn committed_content(&self, path: &str) -> Result<Option<String>>;
 }
@@ -49,6 +54,7 @@ pub trait AnchorResolver {
 }
 
 pub struct TextResolver;
+
 impl AnchorResolver for TextResolver {
     fn resolve(
         &self,
@@ -129,14 +135,21 @@ impl AnchorResolver for TextResolver {
             }
         }
         match matches.len() {
-            0 => result.explanation = "No exact excerpt correspondence established; changed code may require another resolver".into(),
+            0 => {
+                result.explanation =
+                    "No exact excerpt correspondence established; changed code may require another resolver"
+                        .into();
+            }
             1 => {
                 result.locations = matches;
-                result.explanation = "Unique exact excerpt correspondence; explanation validity was not assessed".into();
+                result.explanation =
+                    "Unique exact excerpt correspondence; explanation validity was not assessed"
+                        .into();
             }
             _ => {
                 result.alternatives = matches.into_iter().map(|location| vec![location]).collect();
-                result.explanation = "Multiple exact excerpts are alternatives, not a joint correspondence".into();
+                result.explanation =
+                    "Multiple exact excerpts are alternatives, not a joint correspondence".into();
             }
         }
         Ok(result)

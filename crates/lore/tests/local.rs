@@ -4,9 +4,11 @@ use std::{
     process::{Command, Output},
 };
 use tempfile::TempDir;
+
 struct Setup {
     temp: TempDir,
 }
+
 impl Setup {
     fn new() -> Self {
         let this = Self {
@@ -27,9 +29,11 @@ impl Setup {
         this.ok(&["init"]);
         this
     }
+
     fn repo(&self) -> std::path::PathBuf {
         self.temp.path().join("code")
     }
+
     fn git(&self, args: &[&str]) {
         let o = Command::new("git")
             .arg("-C")
@@ -39,6 +43,7 @@ impl Setup {
             .unwrap();
         assert!(o.status.success(), "{:?}", o);
     }
+
     fn run_at(&self, repo: &Path, args: &[&str], input: Option<&str>) -> Output {
         use std::io::Write;
         let mut child = Command::new(env!("CARGO_BIN_EXE_lore"))
@@ -64,12 +69,15 @@ impl Setup {
         }
         child.wait_with_output().unwrap()
     }
+
     fn run(&self, args: &[&str]) -> Output {
         self.run_at(&self.repo(), args, None)
     }
+
     fn ok(&self, args: &[&str]) -> Value {
         parse(self.run(args))
     }
+
     fn edit(&self, id: &str, revision: &str, body: &str) -> Value {
         parse(self.run_at(
             &self.repo(),
@@ -86,6 +94,7 @@ impl Setup {
         ))
     }
 }
+
 fn parse(o: Output) -> Value {
     assert!(
         o.status.success(),
@@ -95,9 +104,11 @@ fn parse(o: Output) -> Value {
     );
     serde_json::from_slice(&o.stdout).unwrap()
 }
+
 fn text<'a>(v: &'a Value, key: &str) -> &'a str {
     v[key].as_str().unwrap()
 }
+
 #[test]
 fn document_history_cas_curation_and_archive() {
     let s = Setup::new();
@@ -204,6 +215,7 @@ fn document_history_cas_curation_and_archive() {
     );
     assert!(!s.repo().join(".lore").exists());
 }
+
 #[test]
 fn worktree_install_uses_target_projection_and_isolates_changes() {
     let s = Setup::new();
@@ -259,6 +271,7 @@ fn worktree_install_uses_target_projection_and_isolates_changes() {
     let failed: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(failed["results"][0]["error"]["kind"], "conflict");
 }
+
 #[test]
 fn ambiguous_locations_and_links_remain_explicit() {
     let s = Setup::new();
@@ -287,7 +300,13 @@ fn ambiguous_locations_and_links_remain_explicit() {
     let other = s.ok(&["create", "Target"]);
     let page = s.ok(&["create", "Wiki"]);
     let pid = text(&page["document"], "id");
-    s.edit(pid,text(&page,"revision"),&format!("[[Target]] [[id:{id}|stable]]\n\n``[[Target]]``\n\n    [[Target]]\n\n```\n[[Target]]\n```\n\\[[Target]]\n"));
+    s.edit(
+        pid,
+        text(&page, "revision"),
+        &format!(
+            "[[Target]] [[id:{id}|stable]]\n\n``[[Target]]``\n\n    [[Target]]\n\n```\n[[Target]]\n```\n\\[[Target]]\n"
+        ),
+    );
     let graph = s.ok(&["links", pid]);
     assert_eq!(graph["outgoing"].as_array().unwrap().len(), 2);
     assert_eq!(graph["outgoing"][0]["matches"].as_array().unwrap().len(), 2);
@@ -307,6 +326,7 @@ fn ambiguous_locations_and_links_remain_explicit() {
     );
     assert_ne!(other["document"]["id"], target["document"]["id"]);
 }
+
 #[test]
 fn unavailable_and_corrupt_are_not_empty_search() {
     let s = Setup::new();
@@ -342,6 +362,7 @@ fn unavailable_and_corrupt_are_not_empty_search() {
         "not_initialized"
     );
 }
+
 #[test]
 fn custom_settings_are_idempotent_and_data_cannot_enter_code() {
     let s = Setup::new();
@@ -375,6 +396,7 @@ fn custom_settings_are_idempotent_and_data_cannot_enter_code() {
             .success()
     );
 }
+
 #[test]
 fn concurrent_edits_preserve_a_single_winner() {
     let s = Setup::new();

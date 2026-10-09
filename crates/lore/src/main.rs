@@ -21,12 +21,14 @@ struct Cli {
     #[command(subcommand)]
     command: Operation,
 }
+
 #[derive(Clone, Copy, ValueEnum)]
 enum Author {
     Human,
     Agent,
     Unknown,
 }
+
 impl From<Author> for Actor {
     fn from(value: Author) -> Self {
         match value {
@@ -36,6 +38,7 @@ impl From<Author> for Actor {
         }
     }
 }
+
 #[derive(Subcommand)]
 enum Operation {
     /// Configure external knowledge backends. Credentials remain in environment variables.
@@ -164,6 +167,7 @@ enum Operation {
         revision: Option<RevisionId>,
     },
 }
+
 fn body(file: Option<&PathBuf>, stdin: bool) -> Result<Option<String>> {
     if let Some(file) = file {
         return Ok(Some(std::fs::read_to_string(file)?));
@@ -175,6 +179,7 @@ fn body(file: Option<&PathBuf>, stdin: bool) -> Result<Option<String>> {
     }
     Ok(None)
 }
+
 fn scope(workspace: &Workspace, path: &std::path::Path) -> Result<String> {
     if path == std::path::Path::new(".") || path == workspace.code.root {
         Ok(String::new())
@@ -182,6 +187,7 @@ fn scope(workspace: &Workspace, path: &std::path::Path) -> Result<String> {
         workspace.code.relative(path)
     }
 }
+
 fn execute(cli: &Cli) -> Result<Value> {
     let data_home = home()?;
     match &cli.command {
@@ -294,9 +300,11 @@ fn execute(cli: &Cli) -> Result<Value> {
                     })
                     .collect()
             };
-            Ok(
-                json!({"documents":documents,"coverage":"active workspace documents","resolver":"exact text with Git rename discovery"}),
-            )
+            Ok(json!({
+                "documents": documents,
+                "coverage": "active workspace documents",
+                "resolver": "exact text with Git rename discovery",
+            }))
         }
         Operation::Show { id, revision, .. } => Ok(serde_json::to_value(
             workspace.read(id, revision.as_ref())?,
@@ -447,13 +455,18 @@ fn execute(cli: &Cli) -> Result<Value> {
                 })();
                 results.push(match installed {
                     Ok(view) => json!({"status":"installed","view":view}),
-                    Err(e) => json!({"status":"failed","id":view.document.id,"error":{"kind":e.kind,"message":e.message}}),
+                    Err(e) => json!({
+                        "status": "failed",
+                        "id": view.document.id,
+                        "error": {"kind": e.kind, "message": e.message},
+                    }),
                 });
             }
             Ok(json!({"results":results}))
         }
     }
 }
+
 fn print_human(value: &Value, command: &Operation) {
     match command {
         Operation::Docs { command } => backend_commands::print(value, command),
@@ -521,6 +534,7 @@ fn print_human(value: &Value, command: &Operation) {
         _ => println!("{}", serde_json::to_string_pretty(value).unwrap()),
     }
 }
+
 fn main() {
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,

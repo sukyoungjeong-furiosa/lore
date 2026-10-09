@@ -9,38 +9,47 @@ pub fn hash(bytes: impl AsRef<[u8]>) -> String {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct DocumentId(String);
+
 impl DocumentId {
     pub fn new() -> Self {
         Self(uuid::Uuid::new_v4().to_string())
     }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }
 }
+
 impl Default for DocumentId {
     fn default() -> Self {
         Self::new()
     }
 }
+
 impl TryFrom<String> for DocumentId {
     type Error = Error;
+
     fn try_from(value: String) -> Result<Self> {
         uuid::Uuid::parse_str(&value)
             .map(|v| Self(v.to_string()))
             .map_err(|_| Error::invalid("Invalid document ID"))
     }
 }
+
 impl std::str::FromStr for DocumentId {
     type Err = Error;
+
     fn from_str(value: &str) -> Result<Self> {
         value.to_owned().try_into()
     }
 }
+
 impl From<DocumentId> for String {
     fn from(value: DocumentId) -> Self {
         value.0
     }
 }
+
 impl std::fmt::Display for DocumentId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.0.fmt(f)
@@ -50,16 +59,20 @@ impl std::fmt::Display for DocumentId {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct RevisionId(String);
+
 impl RevisionId {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
     pub fn of(bytes: impl AsRef<[u8]>) -> Self {
         Self(hash(bytes))
     }
 }
+
 impl TryFrom<String> for RevisionId {
     type Error = Error;
+
     fn try_from(value: String) -> Result<Self> {
         if value.len() != 64 || !value.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err(Error::invalid("Invalid revision ID"));
@@ -67,17 +80,21 @@ impl TryFrom<String> for RevisionId {
         Ok(Self(value.to_ascii_lowercase()))
     }
 }
+
 impl std::str::FromStr for RevisionId {
     type Err = Error;
+
     fn from_str(value: &str) -> Result<Self> {
         value.to_owned().try_into()
     }
 }
+
 impl From<RevisionId> for String {
     fn from(value: RevisionId) -> Self {
         value.0
     }
 }
+
 impl std::fmt::Display for RevisionId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.0.fmt(f)
@@ -103,10 +120,13 @@ pub struct Curation {
 pub struct CodeContext {
     pub repository: String,
     pub head: Option<String>,
+    /// Whether this file's observed content differs from HEAD, including untracked files.
     pub working_tree: bool,
+    /// SHA-256 of the full observed file, rather than the selected line range.
     pub content_digest: String,
 }
 
+/// A one-based, inclusive line range in the captured UTF-8 file.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Anchor {
     pub id: DocumentId,
@@ -129,6 +149,7 @@ pub struct Document {
     pub archived: bool,
     pub anchors: Vec<Anchor>,
 }
+
 impl Document {
     pub fn new(title: String, content: String, actor: Actor) -> Result<Self> {
         let value = Self {
@@ -145,17 +166,20 @@ impl Document {
         value.validate()?;
         Ok(value)
     }
+
     pub fn content_digest(&self) -> String {
         hash(
             serde_json::to_vec(&(&self.content_format, &self.content))
                 .expect("String serialization"),
         )
     }
+
     pub fn curated(&self) -> bool {
         self.curation
             .as_ref()
             .is_some_and(|c| c.content_digest == self.content_digest())
     }
+
     pub fn validate(&self) -> Result<()> {
         if self.title.trim().is_empty() {
             return Err(Error::invalid("Title must not be empty"));
@@ -180,6 +204,7 @@ impl Document {
         }
         Ok(())
     }
+
     pub fn record_content_author(&mut self, actor: Actor) {
         if !self.authorship.contains(&actor) {
             self.authorship.push(actor);
@@ -209,6 +234,7 @@ pub struct Revision {
     pub at_ms: u64,
     pub document: Document,
 }
+
 impl Revision {
     pub fn id(&self) -> Result<RevisionId> {
         Ok(RevisionId::of(serde_json::to_vec(self)?))
@@ -221,6 +247,7 @@ pub struct DocumentView {
     pub document: Document,
     pub curated: bool,
 }
+
 impl DocumentView {
     pub fn new(revision: RevisionId, document: Document) -> Self {
         let curated = document.curated();

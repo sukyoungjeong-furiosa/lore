@@ -18,15 +18,18 @@ pub enum BackendConfig {
         api_url: String,
     },
 }
+
 pub struct BackendRegistry {
     directory: PathBuf,
 }
+
 impl BackendRegistry {
     pub fn new(home: &Path) -> Self {
         Self {
             directory: home.join("backends"),
         }
     }
+
     pub fn list(&self) -> Result<BTreeMap<String, BackendConfig>> {
         match std::fs::read(self.directory.join("config.json")) {
             Ok(bytes) => Ok(serde_json::from_slice(&bytes)?),
@@ -34,11 +37,13 @@ impl BackendRegistry {
             Err(e) => Err(e.into()),
         }
     }
+
     pub fn get(&self, name: &str) -> Result<BackendConfig> {
         self.list()?
             .remove(name)
             .ok_or_else(|| Error::new(ErrorKind::NotFound, "Backend is not configured"))
     }
+
     pub fn add(&self, name: &str, config: BackendConfig) -> Result<()> {
         if name.is_empty()
             || name.len() > 100
@@ -71,6 +76,7 @@ impl BackendRegistry {
             &serde_json::to_vec_pretty(&configs)?,
         )
     }
+
     pub fn remove(&self, name: &str) -> Result<()> {
         std::fs::create_dir_all(&self.directory)?;
         let lock = std::fs::OpenOptions::new()
@@ -89,6 +95,7 @@ impl BackendRegistry {
             &serde_json::to_vec_pretty(&configs)?,
         )
     }
+
     pub fn cache(&self, name: &str) -> BackendCache {
         BackendCache {
             directory: self.directory.join("cache").join(hash(name)),
@@ -102,6 +109,7 @@ pub struct Retrieved<T> {
     pub fetched_at_ms: u64,
     pub value: T,
 }
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DocumentIndex {
     pub roots: Vec<DocumentReference>,
@@ -109,13 +117,16 @@ pub struct DocumentIndex {
     pub complete: bool,
     pub warnings: Vec<String>,
 }
+
 pub struct BackendCache {
     directory: PathBuf,
 }
+
 impl BackendCache {
     fn file(&self, key: &str) -> PathBuf {
         self.directory.join(format!("{}.json", hash(key)))
     }
+
     fn store<T: Serialize>(&self, key: &str, value: T) -> Result<Retrieved<T>> {
         let retrieved = Retrieved {
             cached: false,
@@ -125,6 +136,7 @@ impl BackendCache {
         atomic_write(&self.file(key), &serde_json::to_vec_pretty(&retrieved)?)?;
         Ok(retrieved)
     }
+
     fn cached<T: DeserializeOwned>(&self, key: &str) -> Result<Retrieved<T>> {
         let bytes = std::fs::read(self.file(key)).map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
@@ -140,6 +152,7 @@ impl BackendCache {
         result.cached = true;
         Ok(result)
     }
+
     pub fn roots(
         &self,
         backend: Option<&dyn KnowledgeBackend>,
@@ -174,6 +187,7 @@ impl BackendCache {
             },
         )
     }
+
     pub fn children(
         &self,
         backend: Option<&dyn KnowledgeBackend>,
@@ -194,6 +208,7 @@ impl BackendCache {
             None => self.cached(&key),
         }
     }
+
     pub fn metadata(
         &self,
         backend: Option<&dyn KnowledgeBackend>,
@@ -205,6 +220,7 @@ impl BackendCache {
             None => self.cached(&key),
         }
     }
+
     pub fn read(
         &self,
         backend: Option<&dyn KnowledgeBackend>,
@@ -226,6 +242,7 @@ impl BackendCache {
             None => self.cached(&key),
         }
     }
+
     pub fn index(
         &self,
         backend: &dyn KnowledgeBackend,
@@ -271,6 +288,7 @@ impl BackendCache {
             },
         )
     }
+
     pub fn search(
         &self,
         query: &str,

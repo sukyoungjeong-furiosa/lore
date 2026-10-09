@@ -6,38 +6,47 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct MappingId(String);
+
 impl MappingId {
     pub fn new() -> Self {
         Self(uuid::Uuid::new_v4().to_string())
     }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }
 }
+
 impl Default for MappingId {
     fn default() -> Self {
         Self::new()
     }
 }
+
 impl TryFrom<String> for MappingId {
     type Error = Error;
+
     fn try_from(value: String) -> Result<Self> {
         uuid::Uuid::parse_str(&value)
             .map(|v| Self(v.to_string()))
             .map_err(|_| Error::invalid("Invalid mapping ID"))
     }
 }
+
 impl std::str::FromStr for MappingId {
     type Err = Error;
+
     fn from_str(value: &str) -> Result<Self> {
         value.to_owned().try_into()
     }
 }
+
 impl From<MappingId> for String {
     fn from(value: MappingId) -> Self {
         value.0
     }
 }
+
 impl std::fmt::Display for MappingId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.0.fmt(f)
@@ -52,6 +61,7 @@ pub struct Mapping {
     pub context: String,
     pub archived: bool,
 }
+
 impl Mapping {
     pub fn validate(&self) -> Result<()> {
         self.document.validate()?;
@@ -79,11 +89,13 @@ pub struct MappingRevision {
     pub at_ms: u64,
     pub mapping: Mapping,
 }
+
 impl MappingRevision {
     pub fn id(&self) -> Result<RevisionId> {
         Ok(RevisionId::of(serde_json::to_vec(self)?))
     }
 }
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MappingView {
     pub revision: RevisionId,
@@ -98,6 +110,7 @@ pub struct AnchorSummary {
     pub end: usize,
     pub context: crate::CodeContext,
 }
+
 #[derive(Clone, Debug, Serialize)]
 pub struct MappingSummary {
     pub id: MappingId,
@@ -106,6 +119,7 @@ pub struct MappingSummary {
     pub context: String,
     pub archived: bool,
 }
+
 #[derive(Clone, Debug, Serialize)]
 pub struct MappingRevisionSummary {
     pub parent: Option<RevisionId>,
@@ -113,12 +127,14 @@ pub struct MappingRevisionSummary {
     pub at_ms: u64,
     pub mapping: MappingSummary,
 }
+
 /// Discovery omits captured source bodies; full revisions remain available through explicit reads.
 #[derive(Clone, Debug, Serialize)]
 pub struct MappingSummaryView {
     pub revision: RevisionId,
     pub record: MappingRevisionSummary,
 }
+
 impl From<MappingView> for MappingSummaryView {
     fn from(view: MappingView) -> Self {
         let record = view.record;

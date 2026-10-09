@@ -12,11 +12,13 @@ pub struct SharedBaseline {
     pub source: String,
     pub revision: String,
 }
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ActiveDocument {
     pub revision: RevisionId,
     pub shared_baseline: Option<SharedBaseline>,
 }
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WorkspaceState {
     pub schema_version: u32,
@@ -34,11 +36,13 @@ pub struct Workspace {
     pub repository: Box<dyn KnowledgeRepository>,
     pub mapping_repository: Box<dyn lore_core::MappingRepository>,
 }
+
 #[derive(Clone, Debug, Serialize)]
 pub struct LocatedDocument {
     pub view: DocumentView,
     pub projections: Vec<Projection>,
 }
+
 #[derive(Clone, Debug, Serialize)]
 pub struct SearchHit {
     pub id: DocumentId,
@@ -51,6 +55,7 @@ pub struct SearchHit {
     pub snippet: String,
     pub score: usize,
 }
+
 #[derive(Default)]
 pub struct SearchOptions {
     pub include_archived: bool,
@@ -65,6 +70,7 @@ impl Workspace {
             .join(hash(root.to_string_lossy().as_bytes()))
             .join("workspace.json")
     }
+
     pub fn init(
         home: &Path,
         checkout: &Path,
@@ -130,6 +136,7 @@ impl Workspace {
         }
         Self::open(&home, checkout)
     }
+
     pub fn open(home: &Path, checkout: &Path) -> Result<Self> {
         let discovered = GitRepository::discover(checkout, None)?;
         let state_path = Self::state_path(&absolute(home)?, &discovered.root);
@@ -162,9 +169,11 @@ impl Workspace {
             }),
         })
     }
+
     pub fn state(&self) -> Result<WorkspaceState> {
         Ok(serde_json::from_slice(&std::fs::read(&self.state_path)?)?)
     }
+
     pub(crate) fn lock(&self) -> Result<std::fs::File> {
         let file = std::fs::OpenOptions::new()
             .read(true)
@@ -173,6 +182,7 @@ impl Workspace {
         file.lock()?;
         Ok(file)
     }
+
     pub fn list(&self, include_archived: bool) -> Result<Vec<DocumentView>> {
         let state = self.state()?;
         let mut found = vec![];
@@ -192,6 +202,7 @@ impl Workspace {
         });
         Ok(found)
     }
+
     pub fn read(&self, id: &DocumentId, revision: Option<&RevisionId>) -> Result<DocumentView> {
         let state = self.state()?;
         let active = state.documents.get(id).ok_or_else(|| {
@@ -204,6 +215,7 @@ impl Workspace {
         let revision = self.repository.load(id, selected)?;
         Ok(DocumentView::new(selected.clone(), revision.document))
     }
+
     pub fn create(&self, document: Document, actor: Actor) -> Result<DocumentView> {
         let _lock = self.lock()?;
         let mut state = self.state()?;
@@ -230,6 +242,7 @@ impl Workspace {
         atomic_write(&self.state_path, &serde_json::to_vec_pretty(&state)?)?;
         Ok(DocumentView::new(id, document))
     }
+
     /// Applies an edit only while the active revision still matches the caller's observation.
     pub fn update(
         &self,
@@ -278,6 +291,7 @@ impl Workspace {
         atomic_write(&self.state_path, &serde_json::to_vec_pretty(&state)?)?;
         Ok(DocumentView::new(revision_id, document))
     }
+
     pub fn history(&self, id: &DocumentId) -> Result<Vec<(RevisionId, Revision)>> {
         let view = self.read(id, None)?;
         let mut next = Some(view.revision);
@@ -289,6 +303,7 @@ impl Workspace {
         }
         Ok(history)
     }
+
     pub fn activate(&self, id: &DocumentId, revision: &RevisionId) -> Result<DocumentView> {
         let _lock = self.lock()?;
         let mut state = self.state()?;
@@ -308,6 +323,7 @@ impl Workspace {
         atomic_write(&self.state_path, &serde_json::to_vec_pretty(&state)?)?;
         Ok(DocumentView::new(revision.clone(), value.document))
     }
+
     pub fn search(&self, query: &str, options: &SearchOptions) -> Result<Vec<SearchHit>> {
         let terms: Vec<_> = query.split_whitespace().map(str::to_lowercase).collect();
         let mut hits = vec![];
@@ -378,6 +394,7 @@ impl Workspace {
         });
         Ok(hits)
     }
+
     pub fn locate(
         &self,
         scope: &str,
@@ -410,6 +427,7 @@ impl Workspace {
         }
         Ok(found)
     }
+
     pub fn connections(
         &self,
         id: &DocumentId,
@@ -417,11 +435,21 @@ impl Workspace {
     ) -> Result<serde_json::Value> {
         let view = self.read(id, revision)?;
         let documents: Vec<_> = self.list(true)?.into_iter().map(|v| v.document).collect();
-        let outgoing: Vec<_> = links(&view.document.content).into_iter().map(|link| {
-            let resolved = targets(&link.target, &documents);
-            serde_json::json!({"target": link.target, "label": link.label,
-                "matches": resolved.iter().map(|d| serde_json::json!({"id":d.id,"title":d.title,"archived":d.archived})).collect::<Vec<_>>()})
-        }).collect();
+        let outgoing: Vec<_> = links(&view.document.content)
+            .into_iter()
+            .map(|link| {
+                let resolved = targets(&link.target, &documents);
+                serde_json::json!({
+                    "target": link.target,
+                    "label": link.label,
+                    "matches": resolved.iter().map(|d| serde_json::json!({
+                        "id": d.id,
+                        "title": d.title,
+                        "archived": d.archived,
+                    })).collect::<Vec<_>>(),
+                })
+            })
+            .collect();
         let backlinks: Vec<_> = documents
             .iter()
             .filter(|d| d.id != *id)

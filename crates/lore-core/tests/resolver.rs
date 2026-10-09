@@ -3,13 +3,16 @@ struct Code {
     content: Option<String>,
     unavailable: bool,
 }
+
 impl CodeRepository for Code {
     fn identity(&self) -> &str {
         "example"
     }
+
     fn head(&self) -> Option<String> {
         Some("target-commit".into())
     }
+
     fn read(&self, _: &str) -> Result<Option<String>> {
         if self.unavailable {
             Err(Error::new(
@@ -20,13 +23,16 @@ impl CodeRepository for Code {
             Ok(self.content.clone())
         }
     }
+
     fn paths(&self, _: &Anchor, _: Option<&str>) -> Result<Vec<String>> {
         Ok(vec!["code.rs".into()])
     }
+
     fn committed_content(&self, _: &str) -> Result<Option<String>> {
         Ok(None)
     }
 }
+
 fn anchor() -> Anchor {
     let snapshot = "same\nsame\n".to_string();
     Anchor {
@@ -43,6 +49,7 @@ fn anchor() -> Anchor {
         snapshot,
     }
 }
+
 #[test]
 fn unchanged_file_retains_selected_occurrence_even_with_duplicate_excerpts() {
     let anchor = anchor();
@@ -60,6 +67,7 @@ fn unchanged_file_retains_selected_occurrence_even_with_duplicate_excerpts() {
     );
     assert_eq!(anchor.context.head.as_deref(), Some("source-commit"));
 }
+
 #[test]
 fn unsupported_correspondence_is_distinct_from_resolver_failure() {
     let code = Code {
@@ -81,6 +89,7 @@ fn unsupported_correspondence_is_distinct_from_resolver_failure() {
         ErrorKind::Unavailable
     );
 }
+
 #[test]
 fn malformed_anchor_is_rejected_without_panicking() {
     let mut anchor = anchor();
