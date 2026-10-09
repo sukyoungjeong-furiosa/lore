@@ -21,6 +21,7 @@ pub enum BackendOperation {
         name: String,
     },
 }
+
 #[derive(Subcommand)]
 pub enum DocsOperation {
     /// Read document metadata independently of its body.
@@ -68,6 +69,7 @@ pub enum DocsOperation {
         query: String,
     },
 }
+
 pub fn configure(home: &Path, command: &BackendOperation) -> Result<Value> {
     let registry = BackendRegistry::new(home);
     match command {
@@ -108,6 +110,7 @@ pub fn configure(home: &Path, command: &BackendOperation) -> Result<Value> {
         }
     }
 }
+
 fn configured(
     registry: &BackendRegistry,
     name: &str,
@@ -138,6 +141,7 @@ fn configured(
     };
     Ok((roots, backend))
 }
+
 pub fn reference(home: &Path, backend: &str, page: &str) -> Result<DocumentReference> {
     BackendRegistry::new(home).get(backend)?;
     Ok(DocumentReference {
@@ -145,6 +149,7 @@ pub fn reference(home: &Path, backend: &str, page: &str) -> Result<DocumentRefer
         id: page_id(page)?,
     })
 }
+
 fn prefer_cache<T>(
     cached: bool,
     refresh: bool,
@@ -160,6 +165,7 @@ fn prefer_cache<T>(
     }
     retrieve()
 }
+
 pub fn documents(home: &Path, command: &DocsOperation) -> Result<Value> {
     let registry = BackendRegistry::new(home);
     let name = match command {
@@ -242,8 +248,17 @@ pub fn documents(home: &Path, command: &DocsOperation) -> Result<Value> {
                 if *with_content {
                     for document in &index.value.documents {
                         results.push(match cache.read(Some(&backend), &document.reference) {
-                            Ok(content) => json!({"status":"fetched","document":document.reference,"partial":content.value.partial,"warnings":content.value.warnings}),
-                            Err(error) => json!({"status":"failed","document":document.reference,"error":{"kind":error.kind,"message":error.message}}),
+                            Ok(content) => json!({
+                                "status": "fetched",
+                                "document": document.reference,
+                                "partial": content.value.partial,
+                                "warnings": content.value.warnings,
+                            }),
+                            Err(error) => json!({
+                                "status": "failed",
+                                "document": document.reference,
+                                "error": {"kind": error.kind, "message": error.message},
+                            }),
                         });
                     }
                 }
@@ -302,6 +317,25 @@ pub fn print(value: &Value, command: &DocsOperation) {
     if let Some(warnings) = value["value"]["warnings"].as_array() {
         for warning in warnings {
             eprintln!("Warning: {}", warning.as_str().unwrap_or_default());
+        }
+    }
+    if let Some(results) = value["results"].as_array() {
+        for result in results {
+            if result["status"] == "failed" {
+                eprintln!(
+                    "Failed to fetch {}: {}",
+                    result["document"]["id"].as_str().unwrap(),
+                    result["error"]["message"].as_str().unwrap()
+                );
+            } else if let Some(warnings) = result["warnings"].as_array() {
+                for warning in warnings {
+                    eprintln!(
+                        "Warning for {}: {}",
+                        result["document"]["id"].as_str().unwrap(),
+                        warning.as_str().unwrap_or_default()
+                    );
+                }
+            }
         }
     }
 }

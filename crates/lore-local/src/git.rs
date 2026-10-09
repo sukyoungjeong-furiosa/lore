@@ -11,6 +11,7 @@ pub struct GitRepository {
     pub repository_id: String,
     pub commit: Option<String>,
 }
+
 impl GitRepository {
     pub fn discover(path: &Path, identity: Option<String>) -> Result<Self> {
         let raw = command(path, &["rev-parse", "--show-toplevel"])?;
@@ -44,6 +45,7 @@ impl GitRepository {
             commit,
         })
     }
+
     pub fn relative(&self, path: &Path) -> Result<String> {
         let absolute = if path.is_absolute() {
             path.to_owned()
@@ -61,6 +63,7 @@ impl GitRepository {
         validate_relative_path(&value)?;
         Ok(value)
     }
+
     pub fn capture(&self, path: &str, start: usize, end: usize) -> Result<Anchor> {
         validate_relative_path(path)?;
         let text = self.read(path)?.ok_or_else(|| {
@@ -93,9 +96,11 @@ impl CodeRepository for GitRepository {
     fn identity(&self) -> &str {
         &self.repository_id
     }
+
     fn head(&self) -> Option<String> {
         self.commit.clone()
     }
+
     fn read(&self, path: &str) -> Result<Option<String>> {
         validate_relative_path(path)?;
         let joined = self.root.join(path);
@@ -113,6 +118,7 @@ impl CodeRepository for GitRepository {
         }
         Ok(String::from_utf8(bytes).ok())
     }
+
     fn committed_content(&self, path: &str) -> Result<Option<String>> {
         validate_relative_path(path)?;
         let Some(commit) = &self.commit else {
@@ -120,6 +126,7 @@ impl CodeRepository for GitRepository {
         };
         Ok(command(&self.root, &["show", &format!("{commit}:{path}")]).ok())
     }
+
     fn paths(&self, anchor: &Anchor, requested: Option<&str>) -> Result<Vec<String>> {
         let mut paths = std::collections::BTreeSet::new();
         if self.root.join(&anchor.path).is_file() {
@@ -151,7 +158,7 @@ impl CodeRepository for GitRepository {
         }
         if requested.is_some() || paths.is_empty() {
             let mut args = vec!["ls-files", "-co", "--exclude-standard", "-z", "--"];
-            if let Some(requested) = requested {
+            if let Some(requested) = requested.filter(|path| !path.is_empty()) {
                 args.push(requested);
             }
             for file in command(&self.root, &args)?

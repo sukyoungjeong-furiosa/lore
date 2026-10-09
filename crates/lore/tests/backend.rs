@@ -11,6 +11,7 @@ use std::{
     },
     thread,
 };
+
 const ROOT: &str = "b81457a4-a41d-45b4-9ae4-82d0c0e9e00c";
 const CHILD: &str = "00000000-0000-4000-8000-000000000001";
 const NESTED: &str = "00000000-0000-4000-8000-000000000002";
@@ -26,6 +27,7 @@ struct Mock {
     stop: Arc<AtomicBool>,
     thread: Option<thread::JoinHandle<()>>,
 }
+
 impl Mock {
     fn new() -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -55,12 +57,14 @@ impl Mock {
             thread: Some(thread),
         }
     }
+
     fn set(&self, path: &str, status: u16, body: Value) {
         self.responses
             .lock()
             .unwrap()
             .insert(format!("/v1{path}"), (status, body));
     }
+
     fn fixture(&self) {
         for (id, title) in [
             (ROOT, "PR"),
@@ -71,7 +75,18 @@ impl Mock {
             self.set(&format!("/pages/{id}"), 200, page(id, title));
             self.set(&format!("/blocks/{id}/children"), 200, listing(vec![]));
         }
-        self.set(&format!("/blocks/{ROOT}/children"), 200, json!({"results":[child(CHILD,"Scheduler Design"), {"id":TOGGLE,"type":"toggle","has_children":true}],"has_more":true,"next_cursor":"second cursor"}));
+        self.set(
+            &format!("/blocks/{ROOT}/children"),
+            200,
+            json!({
+                "results": [
+                    child(CHILD, "Scheduler Design"),
+                    {"id": TOGGLE, "type": "toggle", "has_children": true},
+                ],
+                "has_more": true,
+                "next_cursor": "second cursor",
+            }),
+        );
         self.set(
             &format!("/blocks/{ROOT}/children?second"),
             200,
@@ -94,9 +109,18 @@ impl Mock {
             200,
             listing(vec![page(ROW, "Database Design")]),
         );
-        self.set(&format!("/pages/{CHILD}/markdown"), 200, json!({"markdown":"# Design\nBody fetched on demand.","truncated":false,"unknown_block_ids":[]}));
+        self.set(
+            &format!("/pages/{CHILD}/markdown"),
+            200,
+            json!({
+                "markdown": "# Design\nBody fetched on demand.",
+                "truncated": false,
+                "unknown_block_ids": [],
+            }),
+        );
     }
 }
+
 fn serve(
     mut stream: TcpStream,
     requests: &Mutex<Vec<(String, String, Value)>>,
@@ -151,27 +175,45 @@ fn serve(
         .cloned()
         .unwrap_or((404, json!({"message":"not available"})));
     let body = value.to_string();
-    write!(stream,"HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).unwrap();
+    write!(
+        stream,
+        "HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    )
+    .unwrap();
 }
+
 impl Drop for Mock {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
         self.thread.take().unwrap().join().unwrap();
     }
 }
+
 fn page(id: &str, title: &str) -> Value {
-    json!({"id":id,"url":format!("https://www.notion.so/{}",id.replace('-',"")),"last_edited_time":"2026-10-09T00:00:00Z","properties":{"Name":{"type":"title","title":[{"plain_text":title}]}}})
+    json!({
+        "id": id,
+        "url": format!("https://www.notion.so/{}", id.replace('-', "")),
+        "last_edited_time": "2026-10-09T00:00:00Z",
+        "properties": {
+            "Name": {"type": "title", "title": [{"plain_text": title}]},
+        },
+    })
 }
+
 fn child(id: &str, title: &str) -> Value {
     json!({"id":id,"type":"child_page","has_children":true,"child_page":{"title":title}})
 }
+
 fn listing(rows: Vec<Value>) -> Value {
     json!({"results":rows,"has_more":false,"next_cursor":null})
 }
+
 struct Setup {
     temp: tempfile::TempDir,
     repo: PathBuf,
 }
+
 impl Setup {
     fn new(mock: &Mock) -> Self {
         let temp = tempfile::tempdir().unwrap();
@@ -202,6 +244,7 @@ impl Setup {
         ]);
         s
     }
+
     fn git(&self, args: &[&str]) {
         let output = Command::new("git")
             .arg("-C")
@@ -215,6 +258,7 @@ impl Setup {
             String::from_utf8_lossy(&output.stderr)
         );
     }
+
     fn run_at(&self, repo: &std::path::Path, args: &[&str]) -> Output {
         Command::new(env!("CARGO_BIN_EXE_lore"))
             .arg("--repo")
@@ -226,14 +270,17 @@ impl Setup {
             .output()
             .unwrap()
     }
+
     fn ok(&self, args: &[&str]) -> Value {
         parse(self.run_at(&self.repo, args))
     }
 }
+
 fn parse(o: Output) -> Value {
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     serde_json::from_slice(&o.stdout).unwrap()
 }
+
 #[test]
 fn notion_browse_is_not_import_and_body_fetch_is_lazy() {
     let mock = Mock::new();
@@ -336,6 +383,7 @@ fn notion_browse_is_not_import_and_body_fetch_is_lazy() {
         true
     );
 }
+
 #[test]
 fn incomplete_content_and_traversal_remain_explicit() {
     let mock = Mock::new();
@@ -366,6 +414,7 @@ fn incomplete_content_and_traversal_remain_explicit() {
         "corrupt"
     );
 }
+
 #[test]
 fn mapping_history_worktree_projection_and_cas_do_not_change_documents() {
     let mock = Mock::new();
@@ -463,6 +512,38 @@ fn mapping_history_worktree_projection_and_cas_do_not_change_documents() {
 }
 
 #[test]
+fn root_scope_discovers_connections_after_code_changes() {
+    let mock = Mock::new();
+    let s = Setup::new(&mock);
+    s.ok(&["map", "create", "team", CHILD, "scheduler.py:2-3"]);
+    let document = s.ok(&["create", "Local scheduler design"]);
+    s.ok(&[
+        "attach",
+        document["document"]["id"].as_str().unwrap(),
+        "scheduler.py:2-3",
+    ]);
+    std::fs::write(
+        s.repo.join("scheduler.py"),
+        "# inserted context\n# scheduler\ndef schedule():\n    return 42\n",
+    )
+    .unwrap();
+
+    let mappings = s.ok(&["map", "ls", "."]);
+    assert_eq!(mappings["mappings"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        mappings["mappings"][0]["projections"][0]["locations"][0]["start"],
+        3
+    );
+    let documents = s.ok(&["ls", "."]);
+    assert_eq!(documents["documents"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        documents["documents"][0]["projections"][0]["locations"][0]["start"],
+        3
+    );
+    assert!(mock.requests.lock().unwrap().is_empty());
+}
+
+#[test]
 fn cache_first_reads_and_explicit_fetch_preserve_observations_and_mapping_state() {
     let mock = Mock::new();
     mock.fixture();
@@ -555,6 +636,23 @@ fn cache_first_reads_and_explicit_fetch_preserve_observations_and_mapping_state(
             .iter()
             .any(|r| r["status"] == "failed")
     );
+    let human_batch = Command::new(env!("CARGO_BIN_EXE_lore"))
+        .args(["docs", "fetch", "team", "--with-content"])
+        .env("LORE_HOME", s.temp.path().join("knowledge"))
+        .env("LORE_TEST_NOTION_TOKEN", SECRET)
+        .output()
+        .unwrap();
+    assert!(!human_batch.status.success());
+    let errors = String::from_utf8_lossy(&human_batch.stderr);
+    assert!(
+        errors.contains(CHILD),
+        "Failed documents must be identifiable: {errors}"
+    );
+    assert!(
+        errors.contains("HTTP 403"),
+        "Failure reasons must be visible: {errors}"
+    );
+    assert!(!errors.contains(SECRET));
     assert_eq!(
         s.ok(&["status"]),
         state,
