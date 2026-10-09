@@ -1,26 +1,29 @@
 # Interfaces
 
-Lore provides CLI, editor, and agent-facing interfaces to its knowledge and workspace operations.
+Lore provides CLI, editor, and agent-facing interfaces for code-aware discovery and mapping operations.
 
 ## Common Semantics
 
 - Interfaces may expose different subsets of Lore operations, but shared operations follow the same semantics.
-- Interfaces addressing the same workspace share its recorded state and respect its isolation and synchronization contracts.
-- Unavailable knowledge, unresolved references, and failures are distinguishable from successful empty results.
+- Interfaces addressing the same workspace share its recorded mapping state and respect its isolation and synchronization contracts.
+- Document access and editing follow backend capabilities and permissions. Unsupported operations are explicit.
+- Unavailable knowledge, unresolved references, and failures are distinguishable from successful empty results. Discovery identifies its scope and does not imply complete backend coverage.
 
 ## CLI
 
-- Provides document discovery, editing, workspace management, and synchronization.
+- Provides code-aware discovery, mapping inspection and editing, workspace management, and mapping synchronization.
 - Supports non-interactive use and machine-readable results for automation.
+- Provides document access and management where supported by the owning backend.
 
 ## Editor Integration
 
-- Connects code locations to related documents and supports navigation between code and knowledge.
-- Supports reading, editing, and navigating documents within the editor.
+- Connects code locations to related documents and supports navigation through Lore or the owning backend.
+- Supports inspecting and editing mappings within the editor. Document reading and editing depend on backend support.
 - Uses the active workspace's code context for anchor projection.
 
 ## Agent Integration
 
 - Exposes structured operations through MCP or equivalent interfaces.
-- Supports knowledge discovery, reading, editing, and code-reference navigation.
+- Supports discovery, document access, mapping creation and maintenance, and code-reference navigation.
+- Agents may use backend-native tools for document operations while using Lore to preserve code relationships.
 - Does not prescribe agent workflows, prompts, or strategies for organizing knowledge.

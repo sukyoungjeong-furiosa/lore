@@ -1,43 +1,49 @@
 # Knowledge Model
 
-Lore models knowledge through four concepts: Document, Metadata, Link, and Anchor.
+Lore models documents, their metadata and links, and persistent mappings to code anchors.
 
 ## Document
 
-A document is a piece of knowledge with a stable identity, a title, and content.
+A document is knowledge with a stable identity, a title, and content owned by a knowledge backend.
 
-- Documents have a supported content format, with Markdown as the default.
-- Identity remains stable when the title, content, or metadata changes.
-- Titles need not be unique.
-- Documents can be read and edited without a code connection.
-- Documents preserve revision history, allowing previous versions and changes to be inspected.
+- A document reference identifies its backend and its identity within that backend. Titles need not be unique; titles and access credentials are not document identities.
+- Renaming or relocating a document within its backend does not change its reference. Copying it to another backend does not implicitly preserve identity.
+- Documents can exist without code mappings. Referencing or caching a document does not transfer its ownership to Lore.
+- Content formats, editing, permissions, and available history follow the owning backend's contract. Unsupported capabilities must not be implied.
+- Lore-owned documents have a supported content format, with Markdown as the default, and preserve inspectable revision history.
 
 ## Metadata
 
-Metadata describes a document's authorship, change history, tags, curation status,
-and archive state.
+Document metadata describes authorship, change history, tags, curation, and archive state where available.
 
-- Documents may have multiple tags for classification.
-- Curation status indicates whether knowledge has been explicitly curated by a human, independently of its authorship.
-- Curation status does not certify correctness or restrict use or sharing.
-- Changing tags, anchors, or archive state does not change curation status.
-- Archiving preserves a document's identity, content, and references and is reversible.
+- Backend document metadata remains distinct from Lore-managed mapping metadata. Unavailable metadata remains unknown.
+- Curation indicates explicit human curation, independently of authorship. It does not certify correctness or restrict use or sharing.
+- Lore-owned documents may have multiple tags. Changing tags or archive state does not change their curation status.
+- Archiving a Lore-owned document preserves its identity, content, and references and is reversible.
 
 ## Link
 
-Links connect documents and support navigation in both directions through backlinks.
+Links connect documents using conventions supported by their content format and backend.
 
-- Links are expressed in document content using conventions supported by its format.
-- Links to identified documents preserve their targets across renaming or relocation.
+- Links to identified documents preserve their targets across renaming or relocation within the owning backend.
 - Ambiguous title references must not silently resolve to one document.
-- Referenced documents can be fetched on demand when accessible.
-- Unresolved or unavailable references remain visible without preventing the source document from being read.
+- Unresolved or unavailable references remain visible without preventing available content from being read.
+- Lore may expose links and backlinks where available; their absence does not imply that all backend relationships have been enumerated.
+
+## Mapping
+
+A mapping has a stable identity, a document reference, one or more code anchors, and optional explanatory context.
+
+- A document can have zero or more mappings. Creating or editing a mapping does not modify its document.
+- Lore preserves mapping revision history. Mapping authorship and any human confirmation remain distinct from document authorship and curation.
+- A recorded document state describes what was observed when forming the relationship; it does not imply that the backend can retrieve that historical content.
+- Failure to retrieve a document does not remove its mappings or establish that it was deleted.
+- Archiving a mapping preserves its identity, explanatory context, references, and history and is reversible. It does not archive its document.
 
 ## Anchor
 
-An anchor relates a document to a code location at a recorded code revision.
+An anchor records a code repository, revision or captured working state, and location.
 
-- A document can have zero or more anchors.
-- Each anchor identifies the code repository, revision, and location it refers to. Different anchors can refer to different files or revisions.
-- Resolving an anchor against changed code preserves the original reference without modifying the document.
-- Finding a corresponding code location does not establish the validity of the document's explanation.
+- Different anchors may refer to different files, repositories, or code states.
+- Projection preserves the original reference without modifying documents or code.
+- Finding a corresponding location does not establish the validity of the explanation or extend human confirmation to changed code or document content.
