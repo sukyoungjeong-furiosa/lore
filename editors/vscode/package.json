@@ -1,0 +1,258 @@
+{
+  "name": "lore",
+  "displayName": "Lore",
+  "description": "What the code doesn't tell you.",
+  "version": "0.1.3",
+  "publisher": "lore-local",
+  "private": true,
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sukyoungjeong-furiosa/lore.git"
+  },
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onView:lore.knowledge",
+    "onView:lore.mappings",
+    "onView:lore.reader"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "lore.init",
+        "title": "Lore: Initialize Workspace"
+      },
+      {
+        "command": "lore.create",
+        "title": "Lore: Create Document",
+        "icon": "$(add)"
+      },
+      {
+        "command": "lore.attach",
+        "title": "Lore: Attach Document to Selection"
+      },
+      {
+        "command": "lore.search",
+        "title": "Lore: Search Documents",
+        "icon": "$(search)"
+      },
+      {
+        "command": "lore.open",
+        "title": "Lore: Open Document"
+      },
+      {
+        "command": "lore.refresh",
+        "title": "Lore: Refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "lore.toggleCurrentFile",
+        "title": "Lore: Toggle Current File Only",
+        "icon": "$(file-code)"
+      },
+      {
+        "command": "lore.toggleArchived",
+        "title": "Lore: Toggle Archived Documents",
+        "icon": "$(archive)"
+      },
+      {
+        "command": "lore.connectNotion",
+        "title": "Lore: Connect Notion",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "lore.setBackendToken",
+        "title": "Lore: Set Notion Connection Token"
+      },
+      {
+        "command": "lore.openBackend",
+        "title": "Lore: Open Backend Document"
+      },
+      {
+        "command": "lore.searchBackend",
+        "title": "Lore: Search Notion Titles",
+        "icon": "$(search)"
+      },
+      {
+        "command": "lore.indexBackend",
+        "title": "Lore: Index Notion Titles"
+      },
+      {
+        "command": "lore.attachNotion",
+        "title": "Lore: Link Notion Document to Selection"
+      },
+      {
+        "command": "lore.toggleCached",
+        "title": "Lore: Toggle Offline Backend Reads",
+        "icon": "$(database)"
+      },
+      {
+        "command": "lore.fetchBackend",
+        "title": "Lore: Fetch from Backend",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "lore.fetchBackendContent",
+        "title": "Lore: Fetch All Document Content"
+      },
+      {
+        "command": "lore.reloadDocument",
+        "title": "Lore: Reload from Notion",
+        "icon": "$(refresh)",
+        "enablement": "lore.readerIsBackendDocument"
+      },
+      {
+        "command": "lore.openDocumentInNotion",
+        "title": "Lore: Open in Notion",
+        "icon": "$(link-external)",
+        "enablement": "lore.readerIsBackendDocument"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "lore",
+          "title": "Lore",
+          "icon": "media/lore.svg"
+        }
+      ]
+    },
+    "views": {
+      "lore": [
+        {
+          "id": "lore.knowledge",
+          "name": "Knowledge"
+        },
+        {
+          "id": "lore.mappings",
+          "name": "Mappings"
+        },
+        {
+          "id": "lore.reader",
+          "name": "Document",
+          "type": "webview"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "lore.create",
+          "when": "view == lore.knowledge",
+          "group": "navigation"
+        },
+        {
+          "command": "lore.search",
+          "when": "view == lore.knowledge",
+          "group": "navigation"
+        },
+        {
+          "command": "lore.refresh",
+          "when": "view == lore.knowledge",
+          "group": "navigation"
+        },
+        {
+          "command": "lore.connectNotion",
+          "when": "view == lore.knowledge"
+        },
+        {
+          "command": "lore.searchBackend",
+          "when": "view == lore.knowledge"
+        },
+        {
+          "command": "lore.fetchBackend",
+          "when": "view == lore.knowledge"
+        },
+        {
+          "command": "lore.toggleCurrentFile",
+          "when": "view == lore.knowledge"
+        },
+        {
+          "command": "lore.toggleArchived",
+          "when": "view == lore.knowledge"
+        },
+        {
+          "command": "lore.refresh",
+          "when": "view == lore.mappings"
+        },
+        {
+          "command": "lore.reloadDocument",
+          "when": "view == lore.reader && lore.readerIsBackendDocument",
+          "group": "navigation@1"
+        },
+        {
+          "command": "lore.openDocumentInNotion",
+          "when": "view == lore.reader && lore.readerIsBackendDocument",
+          "group": "navigation@2"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "lore.attachNotion",
+          "group": "lore"
+        },
+        {
+          "command": "lore.attach",
+          "group": "lore"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "lore.fetchBackend",
+          "when": "view == lore.knowledge && (viewItem == lore.backend || viewItem == lore.backendDocument)",
+          "group": "inline"
+        },
+        {
+          "command": "lore.fetchBackendContent",
+          "when": "view == lore.knowledge && viewItem == lore.backend"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Lore",
+      "properties": {
+        "lore.executable": {
+          "type": "string",
+          "default": "lore",
+          "scope": "machine",
+          "description": "Path to the locally installed Lore CLI."
+        },
+        "lore.dataHome": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Optional LORE_HOME override. Empty uses the CLI default."
+        },
+        "lore.codeLens": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show related Lore documents using saved code."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc --noEmit && node build.mjs",
+    "test": "npm run build && tsc -p test/tsconfig.json && node dist/test/run.js",
+    "package": "npm run build && vsce package --allow-missing-repository --skip-license",
+    "vscode:prepublish": "npm run build"
+  },
+  "dependencies": {
+    "markdown-it": "^14.1.0"
+  },
+  "devDependencies": {
+    "@types/markdown-it": "^14.1.2",
+    "@types/node": "^20.0.0",
+    "@types/vscode": "1.95.0",
+    "@vscode/test-electron": "^2.5.2",
+    "@vscode/vsce": "^3.6.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.7.0",
+    "playwright-core": "^1.51.0"
+  }
+}
