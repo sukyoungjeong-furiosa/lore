@@ -3,6 +3,8 @@ use lore_local::{BackendConfig, CredentialStore};
 
 fn config(api_url: &str) -> BackendConfig {
     BackendConfig::Notion {
+        display_name: None,
+        discovery_pages: vec![],
         roots: vec!["page".into()],
         token_env: "TEST_NOTION_TOKEN".into(),
         api_url: api_url.into(),
@@ -23,9 +25,15 @@ fn credentials_are_connection_bound_private_and_removable() {
     assert!(store.get("other", &original).unwrap().is_none());
     let mut same_endpoint = config("https://api.notion.com/v1");
     let BackendConfig::Notion {
-        roots, token_env, ..
+        display_name,
+        roots,
+        discovery_pages,
+        token_env,
+        ..
     } = &mut same_endpoint;
+    *display_name = Some("notion".into());
     roots.push("another-page".into());
+    discovery_pages.push("discover-this-page".into());
     *token_env = "OTHER_TOKEN_ENV".into();
     assert_eq!(
         store.get("team", &same_endpoint).unwrap().as_deref(),

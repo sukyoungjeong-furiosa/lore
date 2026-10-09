@@ -5,7 +5,7 @@ use lore_core::{
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{
-    collections::{BTreeMap, BTreeSet, VecDeque},
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
 };
 
@@ -13,7 +13,11 @@ use std::{
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum BackendConfig {
     Notion {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        display_name: Option<String>,
         roots: Vec<String>,
+        #[serde(default)]
+        discovery_pages: Vec<String>,
         token_env: String,
         api_url: String,
     },
@@ -96,6 +100,61 @@ impl BackendRegistry {
         )
     }
 
+    /// Changes the connection's display name without changing document references.
+    pub fn set_display_name(&self, backend: &str, name: String) -> Result<()> {
+        let name = name.trim();
+        if name.is_empty() || name.chars().any(char::is_control) {
+            return Err(Error::invalid(
+                "Display name must be nonempty text without control characters",
+            ));
+        }
+        std::fs::create_dir_all(&self.directory)?;
+        let lock = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(self.directory.join("config.lock"))?;
+        lock.lock()?;
+        let mut configs = self.list()?;
+        let config = configs
+            .get_mut(backend)
+            .ok_or_else(|| Error::new(ErrorKind::NotFound, "Backend is not configured"))?;
+        let BackendConfig::Notion { display_name, .. } = config;
+        *display_name = Some(name.to_owned());
+        atomic_write(
+            &self.directory.join("config.json"),
+            &serde_json::to_vec_pretty(&configs)?,
+        )
+    }
+
+    pub fn set_child_discovery(&self, name: &str, page: String, enabled: bool) -> Result<()> {
+        std::fs::create_dir_all(&self.directory)?;
+        let lock = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(self.directory.join("config.lock"))?;
+        lock.lock()?;
+        let mut configs = self.list()?;
+        let config = configs
+            .get_mut(name)
+            .ok_or_else(|| Error::new(ErrorKind::NotFound, "Backend is not configured"))?;
+        let BackendConfig::Notion {
+            discovery_pages, ..
+        } = config;
+        discovery_pages.retain(|id| id != &page);
+        if enabled {
+            discovery_pages.push(page);
+            discovery_pages.sort();
+        }
+        atomic_write(
+            &self.directory.join("config.json"),
+            &serde_json::to_vec_pretty(&configs)?,
+        )
+    }
+
     pub fn cache(&self, name: &str) -> BackendCache {
         BackendCache {
             directory: self.directory.join("cache").join(hash(name)),
@@ -112,10 +171,40 @@ pub struct Retrieved<T> {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DocumentIndex {
-    pub roots: Vec<DocumentReference>,
+    pub scope: DiscoveryScope,
     pub documents: Vec<BackendDocument>,
     pub complete: bool,
     pub warnings: Vec<String>,
+}
+
+/// Entry pages and pages explicitly selected for direct-child discovery.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiscoveryScope {
+    pub roots: Vec<DocumentReference>,
+    pub discovery_pages: Vec<DocumentReference>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(tag = "phase", rename_all = "snake_case")]
+pub enum IndexProgress {
+    Waiting,
+    Starting,
+    Traversing {
+        processed: usize,
+        documents: usize,
+        remaining: usize,
+        title: String,
+    },
+    Request {
+        requests: u64,
+    },
+    Cached {
+        documents: usize,
+    },
+    Finished {
+        documents: usize,
+        complete: bool,
+    },
 }
 
 pub struct BackendCache {
@@ -167,6 +256,7 @@ impl BackendCache {
         for reference in references {
             match backend.metadata(reference) {
                 Ok(document) => {
+                    self.cache_title(&document)?;
                     self.store(
                         &format!("metadata:{}", serde_json::to_string(&document.reference)?),
                         &document,
@@ -193,19 +283,38 @@ impl BackendCache {
         backend: Option<&dyn KnowledgeBackend>,
         reference: &DocumentReference,
     ) -> Result<Retrieved<DocumentListing>> {
-        let key = format!("children:{}", serde_json::to_string(reference)?);
+        let key = format!(
+            "children:discovery-v1:{}",
+            serde_json::to_string(reference)?
+        );
         match backend {
             Some(backend) => {
                 let listing = backend.children(reference)?;
                 for document in &listing.documents {
-                    self.store(
-                        &format!("metadata:{}", serde_json::to_string(&document.reference)?),
-                        document,
-                    )?;
+                    self.cache_title(document)?;
                 }
                 self.store(&key, listing)
             }
             None => self.cached(&key),
+        }
+    }
+
+    fn cache_title(&self, document: &BackendDocument) -> Result<()> {
+        self.store(
+            &format!("title:{}", serde_json::to_string(&document.reference)?),
+            &document.title,
+        )?;
+        Ok(())
+    }
+
+    /// Returns an observed title without retrieving document metadata or content.
+    pub fn cached_title(&self, reference: &DocumentReference) -> Result<String> {
+        match self.cached::<String>(&format!("title:{}", serde_json::to_string(reference)?)) {
+            Ok(title) => Ok(title.value),
+            Err(error) if error.kind == ErrorKind::NotCached => {
+                Ok(self.metadata(None, reference)?.value.title)
+            }
+            Err(error) => Err(error),
         }
     }
 
@@ -216,7 +325,11 @@ impl BackendCache {
     ) -> Result<Retrieved<BackendDocument>> {
         let key = format!("metadata:{}", serde_json::to_string(reference)?);
         match backend {
-            Some(backend) => self.store(&key, backend.metadata(reference)?),
+            Some(backend) => {
+                let document = backend.metadata(reference)?;
+                self.cache_title(&document)?;
+                self.store(&key, document)
+            }
             None => self.cached(&key),
         }
     }
@@ -230,6 +343,7 @@ impl BackendCache {
         match backend {
             Some(backend) => {
                 let content = backend.read(reference)?;
+                self.cache_title(&content.document)?;
                 self.store(
                     &format!(
                         "metadata:{}",
@@ -246,84 +360,135 @@ impl BackendCache {
     pub fn index(
         &self,
         backend: &dyn KnowledgeBackend,
-        roots: &[DocumentReference],
+        scope: &DiscoveryScope,
     ) -> Result<Retrieved<DocumentIndex>> {
-        let listing = self.roots(Some(backend), roots)?.value;
+        self.index_with_progress(backend, scope, |_| {})
+    }
+
+    fn index_with_progress(
+        &self,
+        backend: &dyn KnowledgeBackend,
+        scope: &DiscoveryScope,
+        mut progress: impl FnMut(IndexProgress),
+    ) -> Result<Retrieved<DocumentIndex>> {
+        progress(IndexProgress::Starting);
+        let listing = self.roots(Some(backend), &scope.roots)?.value;
         let mut warnings = listing.warnings;
         let mut documents: BTreeMap<_, _> = listing
             .documents
             .into_iter()
             .map(|d| (d.reference.clone(), d))
             .collect();
-        let mut pending: VecDeque<_> = documents.keys().cloned().collect();
-        let mut visited = BTreeSet::new();
-        while let Some(reference) = pending.pop_front() {
-            if !visited.insert(reference.clone()) {
+        let pages: BTreeSet<_> = scope.discovery_pages.iter().cloned().collect();
+        for reference in &pages {
+            if scope.roots.contains(reference) {
                 continue;
             }
-            if visited.len() > 5000 {
-                warnings.push("Document indexing limit reached".into());
-                break;
+            match self.metadata(Some(backend), reference) {
+                Ok(document) => {
+                    documents.insert(reference.clone(), document.value);
+                }
+                Err(error) => warnings.push(format!("Document {}: {error}", reference.id)),
             }
-            match self.children(Some(backend), &reference) {
+        }
+        for (processed, reference) in pages.iter().enumerate() {
+            progress(IndexProgress::Traversing {
+                processed,
+                documents: documents.len(),
+                remaining: pages.len() - processed - 1,
+                title: documents
+                    .get(reference)
+                    .map(|d| d.title.clone())
+                    .unwrap_or_default(),
+            });
+            match self.children(Some(backend), reference) {
                 Ok(listing) => {
                     warnings.extend(listing.value.warnings);
                     for document in listing.value.documents {
-                        if !visited.contains(&document.reference) {
-                            pending.push_back(document.reference.clone());
-                        }
-                        documents.insert(document.reference.clone(), document);
+                        documents
+                            .entry(document.reference.clone())
+                            .or_insert(document);
                     }
                 }
                 Err(e) => warnings.push(format!("Document {}: {e}", reference.id)),
             }
         }
-        self.store(
-            "index",
+        let index = self.store(
+            "index:discovery-v1",
             DocumentIndex {
-                roots: roots.to_vec(),
+                scope: scope.clone(),
                 documents: documents.into_values().collect(),
                 complete: warnings.is_empty(),
                 warnings,
             },
-        )
+        )?;
+        progress(IndexProgress::Finished {
+            documents: index.value.documents.len(),
+            complete: index.value.complete,
+        });
+        Ok(index)
     }
 
     /// Refreshes shared title metadata, rechecking freshness under a backend-wide lock.
     pub fn fetch_index<B: KnowledgeBackend>(
         &self,
-        roots: &[DocumentReference],
+        scope: &DiscoveryScope,
         max_age_seconds: Option<u64>,
         backend: impl FnOnce() -> Result<B>,
     ) -> Result<Retrieved<DocumentIndex>> {
+        self.fetch_index_with_progress(scope, max_age_seconds, backend, |_| {})
+    }
+
+    /// Reuses recent partial observations and coalesces refreshes waiting on the same backend.
+    /// Warnings and completeness remain available in the returned index.
+    pub fn fetch_index_with_progress<B: KnowledgeBackend>(
+        &self,
+        scope: &DiscoveryScope,
+        max_age_seconds: Option<u64>,
+        backend: impl FnOnce() -> Result<B>,
+        mut progress: impl FnMut(IndexProgress),
+    ) -> Result<Retrieved<DocumentIndex>> {
+        let previous = self.search("", scope).ok();
+        if let Some(index) = previous.as_ref()
+            && max_age_seconds.is_some_and(|age| {
+                now_ms().saturating_sub(index.fetched_at_ms) < age.saturating_mul(1000)
+            })
+        {
+            progress(IndexProgress::Cached {
+                documents: index.value.documents.len(),
+            });
+            return Ok(index.clone());
+        }
+        let observed = previous.map(|index| index.fetched_at_ms);
         std::fs::create_dir_all(&self.directory)?;
         let lock = std::fs::OpenOptions::new()
             .create(true)
             .truncate(false)
             .read(true)
             .write(true)
-            .open(self.directory.join("index.lock"))?;
+            .open(self.directory.join("index-discovery-v1.lock"))?;
+        progress(IndexProgress::Waiting);
         lock.lock()?;
-        if let Some(age) = max_age_seconds
-            && let Ok(index) = self.search("", roots)
-            && index.value.complete
-            && now_ms().saturating_sub(index.fetched_at_ms) < age.saturating_mul(1000)
+        if let Ok(index) = self.search("", scope)
+            && (Some(index.fetched_at_ms) != observed
+                || max_age_seconds.is_some_and(|age| {
+                    now_ms().saturating_sub(index.fetched_at_ms) < age.saturating_mul(1000)
+                }))
         {
+            progress(IndexProgress::Cached {
+                documents: index.value.documents.len(),
+            });
             return Ok(index);
         }
-        self.index(&backend()?, roots)
+        self.index_with_progress(&backend()?, scope, progress)
     }
 
-    pub fn search(
-        &self,
-        query: &str,
-        roots: &[DocumentReference],
-    ) -> Result<Retrieved<DocumentIndex>> {
-        let mut index: Retrieved<DocumentIndex> = self.cached("index")?;
-        if index.value.roots != roots {
+    pub fn search(&self, query: &str, scope: &DiscoveryScope) -> Result<Retrieved<DocumentIndex>> {
+        let mut index: Retrieved<DocumentIndex> = self.cached("index:discovery-v1")?;
+        if index.value.scope != *scope {
             return Err(Error::new(
                 ErrorKind::Unavailable,
-                "Configured roots differ from the cached index; run docs index again",
+                "Discovery settings differ from the cached index; refresh the document list",
             ));
         }
         let terms: Vec<_> = query.split_whitespace().map(str::to_lowercase).collect();

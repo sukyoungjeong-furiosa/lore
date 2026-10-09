@@ -1,12 +1,17 @@
 use clap::Subcommand;
 use lore_core::{DocumentReference, Error, ErrorKind, Result};
-use lore_local::{BackendConfig, BackendRegistry, CredentialStore};
+use lore_local::{BackendConfig, BackendRegistry, CredentialStore, DiscoveryScope, IndexProgress};
 use lore_notion::{NotionBackend, page_id};
 use serde_json::{Value, json};
 use std::{io::Read, path::Path};
 
 #[derive(Subcommand)]
 pub enum BackendOperation {
+    /// Change the display name without changing the connection's document-reference identity.
+    SetName {
+        backend: String,
+        name: String,
+    },
     /// Manage shared connection credentials for CLI, editor, and hook access.
     Auth {
         #[command(subcommand)]
@@ -46,6 +51,15 @@ pub enum AuthOperation {
 
 #[derive(Subcommand)]
 pub enum DocsOperation {
+    /// Enable or disable direct-child discovery for one page; reading remains available.
+    Discovery {
+        backend: String,
+        page: String,
+        #[arg(long, conflicts_with = "disable", required_unless_present = "disable")]
+        enable: bool,
+        #[arg(long, conflicts_with = "enable")]
+        disable: bool,
+    },
     /// Read document metadata independently of its body.
     Describe {
         backend: String,
@@ -75,9 +89,14 @@ pub enum DocsOperation {
         #[arg(long, conflicts_with = "json")]
         raw: bool,
     },
-    /// Traverse configured roots to build a title index; does not retrieve document bodies.
-    Index { backend: String },
-    /// Refresh a document, or the tree and title index under configured roots.
+    /// Refresh titles from configured pages and explicitly enabled child-discovery pages.
+    Index {
+        backend: String,
+        /// Emit progress as JSON lines on stderr; stdout remains the result.
+        #[arg(long)]
+        progress: bool,
+    },
+    /// Refresh a document, or the title index within configured discovery scope.
     Fetch {
         backend: String,
         page: Option<String>,
@@ -86,8 +105,11 @@ pub enum DocsOperation {
         /// Reuse a sufficiently recent title index; applies only to metadata fetch.
         #[arg(long, conflicts_with_all = ["page", "with_content"])]
         max_age_seconds: Option<u64>,
+        /// Emit progress as JSON lines on stderr; stdout remains the result.
+        #[arg(long)]
+        progress: bool,
     },
-    /// Search cached titles within the configured roots. Run docs index first.
+    /// Search cached titles within the configured discovery scope. Run docs index first.
     Search {
         backend: String,
         #[arg(default_value = "")]
@@ -98,6 +120,10 @@ pub enum DocsOperation {
 pub fn configure(home: &Path, command: &BackendOperation) -> Result<Value> {
     let registry = BackendRegistry::new(home);
     match command {
+        BackendOperation::SetName { backend, name } => {
+            registry.set_display_name(backend, name.clone())?;
+            Ok(json!({"backend":backend, "display_name":name.trim()}))
+        }
         BackendOperation::Auth { operation } => {
             let store = CredentialStore::new(home);
             match operation {
@@ -163,7 +189,9 @@ pub fn configure(home: &Path, command: &BackendOperation) -> Result<Value> {
             registry.add(
                 name,
                 BackendConfig::Notion {
+                    display_name: None,
                     roots,
+                    discovery_pages: vec![],
                     token_env: token_env.clone(),
                     api_url: api_url.clone(),
                 },
@@ -183,6 +211,7 @@ fn configured(
         roots,
         token_env,
         api_url,
+        ..
     } = &config;
     let roots = roots
         .iter()
@@ -233,17 +262,65 @@ fn prefer_cache<T>(
 
 pub fn documents(home: &Path, command: &DocsOperation) -> Result<Value> {
     let registry = BackendRegistry::new(home);
+    if let DocsOperation::Discovery {
+        backend,
+        page,
+        enable,
+        ..
+    } = command
+    {
+        let page = page_id(page)?;
+        registry.set_child_discovery(backend, page.clone(), *enable)?;
+        return Ok(json!({"backend":backend,"page":page,"enabled":enable}));
+    }
     let name = match command {
         DocsOperation::Describe { backend, .. }
         | DocsOperation::Browse { backend, .. }
         | DocsOperation::Show { backend, .. }
-        | DocsOperation::Index { backend }
+        | DocsOperation::Index { backend, .. }
         | DocsOperation::Fetch { backend, .. }
         | DocsOperation::Search { backend, .. } => backend,
+        DocsOperation::Discovery { .. } => unreachable!(),
     };
     let (roots, _) = configured(home, name, true)?;
+    let BackendConfig::Notion {
+        discovery_pages, ..
+    } = registry.get(name)?;
+    let scope = DiscoveryScope {
+        roots: roots.clone(),
+        discovery_pages: discovery_pages
+            .into_iter()
+            .map(|id| DocumentReference {
+                backend: name.clone(),
+                id,
+            })
+            .collect(),
+    };
     let cache = registry.cache(name);
-    let backend = || configured(home, name, false).map(|(_, backend)| backend.unwrap());
+    let reporting = matches!(
+        command,
+        DocsOperation::Index { progress: true, .. } | DocsOperation::Fetch { progress: true, .. }
+    );
+    let report = |progress: IndexProgress| {
+        if reporting {
+            eprintln!("{}", json!({"progress": progress}));
+        }
+    };
+    let backend = || {
+        configured(home, name, false).map(|(_, backend)| {
+            let backend = backend.unwrap();
+            if reporting {
+                backend.with_request_observer(|requests| {
+                    eprintln!(
+                        "{}",
+                        json!({"progress": IndexProgress::Request { requests }})
+                    )
+                })
+            } else {
+                backend
+            }
+        })
+    };
     match command {
         DocsOperation::Describe {
             page,
@@ -267,6 +344,12 @@ pub fn documents(home: &Path, command: &DocsOperation) -> Result<Value> {
         } => match page {
             Some(page) => {
                 let reference = reference(home, name, page)?;
+                if !scope.discovery_pages.contains(&reference) {
+                    return Err(Error::new(
+                        ErrorKind::Unsupported,
+                        "Child discovery is disabled for this page; enable it with `docs discovery --enable`, or read the page with `docs show`",
+                    ));
+                }
                 Ok(serde_json::to_value(prefer_cache(
                     *cached,
                     *refresh,
@@ -295,9 +378,11 @@ pub fn documents(home: &Path, command: &DocsOperation) -> Result<Value> {
                 || cache.read(Some(&backend()?), &reference),
             )?)?)
         }
-        DocsOperation::Index { .. } => Ok(serde_json::to_value(cache.index(&backend()?, &roots)?)?),
+        DocsOperation::Index { .. } => Ok(serde_json::to_value(
+            cache.fetch_index_with_progress(&scope, None, backend, report)?,
+        )?),
         DocsOperation::Search { query, .. } => {
-            Ok(serde_json::to_value(cache.search(query, &roots)?)?)
+            Ok(serde_json::to_value(cache.search(query, &scope)?)?)
         }
         DocsOperation::Fetch {
             page,
@@ -310,7 +395,8 @@ pub fn documents(home: &Path, command: &DocsOperation) -> Result<Value> {
                 let content = cache.read(Some(&backend()?), &reference)?;
                 Ok(serde_json::to_value(content)?)
             } else {
-                let index = cache.fetch_index(&roots, *max_age_seconds, backend)?;
+                let index =
+                    cache.fetch_index_with_progress(&scope, *max_age_seconds, backend, report)?;
                 let mut results = vec![];
                 if *with_content {
                     let backend = configured(home, name, false)?.1.unwrap();
@@ -335,11 +421,22 @@ pub fn documents(home: &Path, command: &DocsOperation) -> Result<Value> {
                 Ok(value)
             }
         }
+        DocsOperation::Discovery { .. } => unreachable!(),
     }
 }
 
 pub fn print(value: &Value, command: &DocsOperation) {
     match command {
+        DocsOperation::Discovery { .. } => println!(
+            "Child discovery {} for {}:{}",
+            if value["enabled"] == true {
+                "enabled"
+            } else {
+                "disabled"
+            },
+            value["backend"].as_str().unwrap(),
+            value["page"].as_str().unwrap()
+        ),
         DocsOperation::Describe { .. } => println!(
             "{}  {}",
             value["value"]["reference"]["id"].as_str().unwrap(),

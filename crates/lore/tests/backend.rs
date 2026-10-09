@@ -190,6 +190,83 @@ impl Drop for Mock {
     }
 }
 
+#[test]
+fn source_metadata_preserves_creator_and_last_editor_without_requiring_user_access() {
+    let mock = Mock::new();
+    mock.fixture();
+    let s = Setup::new(&mock);
+    let creator = "00000000-0000-4000-8000-000000000010";
+    let editor = "00000000-0000-4000-8000-000000000011";
+    let mut metadata = page(CHILD, "Scheduler Design");
+    metadata["created_by"] = json!({"id": creator});
+    metadata["last_edited_by"] = json!({"id": editor});
+    mock.set(&format!("/pages/{CHILD}"), 200, metadata);
+    mock.set(
+        &format!("/users/{creator}"),
+        200,
+        json!({"id":creator,"name":"Designer"}),
+    );
+    mock.set(&format!("/users/{editor}"), 403, json!({}));
+
+    let index = s.ok(&["docs", "fetch", "team"]);
+    let document = index["value"]["documents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|document| document["reference"]["id"] == CHILD)
+        .unwrap();
+    assert!(document["last_modified"].is_null());
+    assert!(document["created_by"].is_null());
+    assert!(document["last_edited_by"].is_null());
+    assert!(
+        mock.requests
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|(_, path, _)| path != &format!("/v1/pages/{CHILD}")
+                && !path.contains("/users/")
+                && !path.ends_with("/markdown"))
+    );
+
+    let before = mock.requests.lock().unwrap().len();
+    let content = s.ok(&["docs", "show", "team", CHILD]);
+    let document = &content["value"]["document"];
+    assert_eq!(document["last_modified"], "2026-10-09T00:00:00Z");
+    assert_eq!(
+        document["created_by"],
+        json!({"id":creator,"name":"Designer"})
+    );
+    assert_eq!(document["last_edited_by"]["id"], editor);
+    assert!(document["last_edited_by"]["name"].is_null());
+    let requests = mock.requests.lock().unwrap();
+    for user in [creator, editor] {
+        assert_eq!(
+            requests[before..]
+                .iter()
+                .filter(|(_, path, _)| path == &format!("/v1/users/{user}"))
+                .count(),
+            1,
+            "User lookups, including denied access, are reused during one read"
+        );
+    }
+    drop(requests);
+    let before = mock.requests.lock().unwrap().len();
+    assert_eq!(
+        s.ok(&["docs", "show", "team", CHILD, "--cached"])["value"]["document"],
+        *document
+    );
+    assert_eq!(mock.requests.lock().unwrap().len(), before);
+
+    let mut legacy = document.clone();
+    for field in ["last_modified", "created_by", "last_edited_by"] {
+        legacy.as_object_mut().unwrap().remove(field);
+    }
+    let decoded: lore_core::BackendDocument = serde_json::from_value(legacy).unwrap();
+    assert!(decoded.last_modified.is_none());
+    assert!(decoded.created_by.is_none());
+    assert!(decoded.last_edited_by.is_none());
+}
+
 fn page(id: &str, title: &str) -> Value {
     json!({
         "id": id,
@@ -216,6 +293,10 @@ struct Setup {
 
 impl Setup {
     fn new(mock: &Mock) -> Self {
+        Self::with_discovery(mock, true)
+    }
+
+    fn with_discovery(mock: &Mock, discover_root: bool) -> Self {
         let temp = tempfile::tempdir().unwrap();
         let repo = temp.path().join("code");
         std::fs::create_dir(&repo).unwrap();
@@ -242,6 +323,13 @@ impl Setup {
             "--api-url",
             &mock.url,
         ]);
+        assert_eq!(
+            s.ok(&["backend", "list"])["team"]["discovery_pages"],
+            json!([])
+        );
+        if discover_root {
+            s.ok(&["docs", "discovery", "team", ROOT, "--enable"]);
+        }
         s
     }
 
@@ -434,6 +522,21 @@ fn notion_browse_is_not_import_and_body_fetch_is_lazy() {
     let config =
         std::fs::read_to_string(s.temp.path().join("knowledge/backends/config.json")).unwrap();
     assert!(!config.contains(SECRET));
+    s.ok(&["backend", "set-name", "team", "notion"]);
+    assert_eq!(s.ok(&["backend", "list"])["team"]["display_name"], "notion");
+    assert_eq!(
+        s.ok(&["docs", "show", "team", CHILD, "--cached"])["value"],
+        doc["value"],
+        "A display-name change preserves cached content and document references"
+    );
+    assert_eq!(
+        s.ok(&[
+            "map",
+            "show",
+            mapping["record"]["mapping"]["id"].as_str().unwrap()
+        ])["revision"],
+        mapping["revision"]
+    );
     mock.set(&format!("/pages/{CHILD}"), 404, json!({"message":SECRET}));
     let failed = s.run_at(&s.repo, &["docs", "show", "team", CHILD, "--refresh"]);
     assert!(!failed.status.success());
@@ -840,6 +943,130 @@ fn fresh_title_discovery_is_shared_and_does_not_require_credentials_again() {
 }
 
 #[test]
+fn partial_title_indexes_are_reused_with_warnings_and_can_be_forced() {
+    let mock = Mock::new();
+    mock.fixture();
+    mock.set(&format!("/blocks/{TOGGLE}/children"), 403, json!({}));
+    let s = Setup::new(&mock);
+    let original = s.ok(&["docs", "fetch", "team", "--max-age-seconds", "900"]);
+    assert_eq!(original["value"]["complete"], false);
+    let requests = mock.requests.lock().unwrap().len();
+    let cached = Command::new(env!("CARGO_BIN_EXE_lore"))
+        .args([
+            "--json",
+            "docs",
+            "fetch",
+            "team",
+            "--max-age-seconds",
+            "900",
+            "--progress",
+        ])
+        .env("LORE_HOME", s.temp.path().join("knowledge"))
+        .env_remove("LORE_TEST_NOTION_TOKEN")
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&cached.stderr).contains("\"phase\":\"cached\""));
+    let cached = parse(cached);
+    assert_eq!(cached["cached"], true);
+    assert_eq!(cached["value"], original["value"]);
+    assert_eq!(mock.requests.lock().unwrap().len(), requests);
+    let forced = s.run_at(&s.repo, &["docs", "fetch", "team", "--progress"]);
+    let events: Vec<Value> = String::from_utf8(forced.stderr.clone())
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert!(events.iter().any(|e| e["progress"]["phase"] == "request"));
+    assert!(
+        events
+            .iter()
+            .any(|e| e["progress"]["phase"] == "traversing")
+    );
+    assert_eq!(events.last().unwrap()["progress"]["phase"], "finished");
+    assert_eq!(parse(forced)["cached"], false);
+    assert!(mock.requests.lock().unwrap().len() > requests);
+}
+
+#[test]
+fn concurrent_title_refreshes_share_the_result_under_the_backend_lock() {
+    use std::process::Stdio;
+    let mock = Mock::new();
+    mock.fixture();
+    let s = Setup::new(&mock);
+    s.ok(&["docs", "fetch", "team"]);
+    let requests = mock.requests.lock().unwrap().len();
+    let lock_path = s
+        .temp
+        .path()
+        .join("knowledge/backends/cache")
+        .join(lore_core::hash("team"))
+        .join("index-discovery-v1.lock");
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(lock_path)
+        .unwrap();
+    lock.lock().unwrap();
+    let mut cached = Command::new(env!("CARGO_BIN_EXE_lore"))
+        .args([
+            "--json",
+            "docs",
+            "fetch",
+            "team",
+            "--max-age-seconds",
+            "900",
+        ])
+        .env("LORE_HOME", s.temp.path().join("knowledge"))
+        .env_remove("LORE_TEST_NOTION_TOKEN")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        if cached.try_wait().unwrap().is_some() {
+            break;
+        }
+        if std::time::Instant::now() >= deadline {
+            cached.kill().unwrap();
+            cached.wait().unwrap();
+            panic!("A fresh title index must be readable while another refresh holds the lock");
+        }
+        thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert_eq!(parse(cached.wait_with_output().unwrap())["cached"], true);
+    let mut workers = vec![];
+    for _ in 0..2 {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_lore"))
+            .args(["--json", "docs", "fetch", "team", "--progress"])
+            .env("LORE_HOME", s.temp.path().join("knowledge"))
+            .env("LORE_TEST_NOTION_TOKEN", SECRET)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut stderr = BufReader::new(child.stderr.take().unwrap());
+        let mut first = String::new();
+        stderr.read_line(&mut first).unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&first).unwrap()["progress"]["phase"],
+            "waiting"
+        );
+        child.stderr = Some(stderr.into_inner());
+        workers.push(child);
+    }
+    lock.unlock().unwrap();
+    let results: Vec<_> = workers
+        .into_iter()
+        .map(|worker| parse(worker.wait_with_output().unwrap()))
+        .collect();
+    assert_ne!(results[0]["cached"], results[1]["cached"]);
+    assert_eq!(results[0]["value"], results[1]["value"]);
+    assert_eq!(results[0]["fetched_at_ms"], results[1]["fetched_at_ms"]);
+    assert_eq!(mock.requests.lock().unwrap().len(), requests * 2);
+}
+
+#[test]
 fn executable_session_hook_refreshes_remote_discovery_in_the_background() {
     use std::{
         io::Write,
@@ -956,5 +1183,151 @@ fn executable_session_hook_refreshes_remote_discovery_in_the_background() {
             .as_object()
             .unwrap()
             .is_empty()
+    );
+}
+
+#[test]
+fn child_discovery_is_opt_in_direct_only_and_independent_of_reading() {
+    let mock = Mock::new();
+    mock.fixture();
+    let s = Setup::with_discovery(&mock, false);
+    let root_only = s.ok(&["docs", "fetch", "team"]);
+    assert_eq!(root_only["value"]["documents"].as_array().unwrap().len(), 1);
+    assert!(
+        mock.requests
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|(_, path, _)| !path.contains("/blocks/"))
+    );
+    let disabled = s.run_at(&s.repo, &["docs", "browse", "team", ROOT]);
+    assert!(!disabled.status.success());
+    assert!(String::from_utf8_lossy(&disabled.stderr).contains("disabled"));
+    let body = s.ok(&["docs", "show", "team", CHILD]);
+    assert_eq!(
+        body["cached"], false,
+        "Undiscovered pages can still be read"
+    );
+
+    mock.requests.lock().unwrap().clear();
+    s.ok(&["docs", "discovery", "team", ROOT, "--enable"]);
+    assert!(
+        mock.requests.lock().unwrap().is_empty(),
+        "Discovery settings require no backend access"
+    );
+    assert!(
+        !s.run_at(&s.repo, &["docs", "search", "team"])
+            .status
+            .success(),
+        "An index from another discovery scope is not current"
+    );
+    let index = s.ok(&["docs", "fetch", "team", "--max-age-seconds", "900"]);
+    assert_eq!(index["cached"], false);
+    assert_eq!(index["value"]["documents"].as_array().unwrap().len(), 4);
+    assert!(
+        mock.requests
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|(_, path, _)| path != &format!("/v1/pages/{CHILD}")
+                && !path.starts_with(&format!("/v1/blocks/{CHILD}/children"))
+                && !path.ends_with("/markdown"))
+    );
+    let mapping = s.ok(&["map", "create", "team", NESTED, "scheduler.py:2-3"]);
+    assert_eq!(
+        s.ok(&["context", "discover", "scheduler.py"])["documents"][0]["title"],
+        "Nested Design",
+        "Discovered titles remain usable by agents without reading bodies"
+    );
+    assert!(
+        !s.run_at(&s.repo, &["docs", "browse", "team", CHILD, "--cached"])
+            .status
+            .success()
+    );
+
+    let grandchild = "00000000-0000-4000-8000-000000000007";
+    mock.set(&format!("/blocks/{CHILD}/children"), 200, listing(vec![
+        child(grandchild, "Grandchild Design"),
+        json!({"id":ROOT,"type":"link_to_page","has_children":true,"link_to_page":{"type":"page_id","page_id":ROOT}}),
+    ]));
+    s.ok(&["docs", "discovery", "team", CHILD, "--enable"]);
+    mock.requests.lock().unwrap().clear();
+    let index = s.ok(&["docs", "fetch", "team"]);
+    assert_eq!(index["value"]["complete"], true);
+    assert_eq!(index["value"]["documents"].as_array().unwrap().len(), 5);
+    let requests = mock.requests.lock().unwrap();
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|(_, path, _)| !path.contains("start_cursor=")
+                && path.split('?').next() == Some(format!("/v1/blocks/{ROOT}/children").as_str()))
+            .count(),
+        1,
+        "Backlinks do not cause rediscovery"
+    );
+    assert!(requests.iter().all(|(_, path, _)| {
+        !path.starts_with(&format!("/v1/blocks/{grandchild}/children"))
+            && path != &format!("/v1/pages/{grandchild}")
+    }));
+    drop(requests);
+    s.ok(&["docs", "discovery", "team", CHILD, "--disable"]);
+    s.ok(&["docs", "discovery", "team", ROOT, "--disable"]);
+    assert!(
+        !s.run_at(&s.repo, &["docs", "search", "team"])
+            .status
+            .success()
+    );
+    assert_eq!(
+        s.ok(&["docs", "fetch", "team"])["value"]["documents"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        s.ok(&["docs", "show", "team", CHILD, "--cached"])["value"],
+        body["value"],
+        "Opting out preserves body observations"
+    );
+    assert_eq!(
+        s.ok(&[
+            "map",
+            "show",
+            mapping["record"]["mapping"]["id"].as_str().unwrap()
+        ])["revision"],
+        mapping["revision"],
+        "Opting out preserves mappings"
+    );
+}
+
+#[test]
+fn legacy_backend_configuration_defaults_to_read_only() {
+    let mock = Mock::new();
+    mock.fixture();
+    let s = Setup::with_discovery(&mock, false);
+    let path = s.temp.path().join("knowledge/backends/config.json");
+    let mut configs: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    configs["team"]
+        .as_object_mut()
+        .unwrap()
+        .remove("discovery_pages");
+    std::fs::write(path, serde_json::to_vec(&configs).unwrap()).unwrap();
+    assert_eq!(
+        s.ok(&["backend", "list"])["team"]["discovery_pages"],
+        json!([])
+    );
+    assert_eq!(
+        s.ok(&["docs", "fetch", "team"])["value"]["documents"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(
+        mock.requests
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|(_, path, _)| !path.contains("/blocks/"))
     );
 }

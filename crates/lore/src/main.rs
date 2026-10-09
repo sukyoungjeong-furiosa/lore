@@ -1,9 +1,8 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use lore_core::{
-    Actor, AnchorResolver, Curation, Document, DocumentId, Error, ErrorKind, Result, RevisionId,
-    TextResolver,
+    Actor, AnchorResolver, Document, DocumentId, Error, ErrorKind, Result, RevisionId, TextResolver,
 };
-use lore_local::{SearchOptions, Workspace, home, now_ms};
+use lore_local::{SearchOptions, Workspace, home};
 use serde_json::{Value, json};
 use std::{io::Read, path::PathBuf};
 mod backend_commands;
@@ -77,7 +76,7 @@ enum Operation {
         #[arg(long)]
         stdin: bool,
         #[arg(long)]
-        tag: Vec<String>,
+        directory: Option<String>,
     },
     /// Record a source reference, including its current code snapshot.
     Attach {
@@ -92,11 +91,9 @@ enum Operation {
         #[arg(long)]
         include_archived: bool,
         #[arg(long)]
-        curated_only: bool,
-        #[arg(long)]
         exclude_agent: bool,
         #[arg(long)]
-        tag: Option<String>,
+        directory: Option<String>,
     },
     /// Discover locally available documents by current or recorded code location.
     Ls {
@@ -125,9 +122,7 @@ enum Operation {
         #[arg(long)]
         title: Option<String>,
         #[arg(long)]
-        tag: Option<Vec<String>>,
-        #[arg(long, conflicts_with = "tag")]
-        clear_tags: bool,
+        directory: Option<String>,
     },
     Archive {
         id: DocumentId,
@@ -138,16 +133,6 @@ enum Operation {
         id: DocumentId,
         #[arg(long)]
         if_match: RevisionId,
-    },
-    /// Explicitly record human curation of the current body.
-    Curate {
-        id: DocumentId,
-        #[arg(long)]
-        if_match: RevisionId,
-        #[arg(long)]
-        by: String,
-        #[arg(long, required = true)]
-        human: bool,
     },
     History {
         id: DocumentId,
@@ -232,14 +217,14 @@ fn execute(cli: &Cli) -> Result<Value> {
             title,
             body_file,
             stdin,
-            tag,
+            directory,
         } => {
             let mut document = Document::new(
                 title.clone(),
                 body(body_file.as_ref(), *stdin)?.unwrap_or_default(),
                 actor,
             )?;
-            document.tags = tag.clone();
+            document.directory = directory.clone().unwrap_or_default();
             Ok(serde_json::to_value(workspace.create(document, actor)?)?)
         }
         Operation::Attach {
@@ -274,16 +259,14 @@ fn execute(cli: &Cli) -> Result<Value> {
         Operation::Search {
             query,
             include_archived,
-            curated_only,
             exclude_agent,
-            tag,
+            directory,
         } => Ok(serde_json::to_value(workspace.search(
             query,
             &SearchOptions {
                 include_archived: *include_archived,
-                curated_only: *curated_only,
                 exclude_agent: *exclude_agent,
-                tag: tag.clone(),
+                directory: directory.clone(),
             },
         )?)?),
         Operation::Ls {
@@ -324,12 +307,13 @@ fn execute(cli: &Cli) -> Result<Value> {
             body_file,
             stdin,
             title,
-            tag,
-            clear_tags,
+            directory,
         } => {
             let content = body(body_file.as_ref(), *stdin)?;
-            if content.is_none() && title.is_none() && tag.is_none() && !clear_tags {
-                return Err(Error::invalid("Select content, title, or tags to edit"));
+            if content.is_none() && title.is_none() && directory.is_none() {
+                return Err(Error::invalid(
+                    "Select content, title, or directory to edit",
+                ));
             }
             Ok(serde_json::to_value(workspace.update(
                 id,
@@ -342,11 +326,8 @@ fn execute(cli: &Cli) -> Result<Value> {
                     if let Some(title) = title {
                         d.title = title.clone();
                     }
-                    if let Some(tags) = tag {
-                        d.tags = tags.clone();
-                    }
-                    if *clear_tags {
-                        d.tags.clear();
+                    if let Some(directory) = directory {
+                        d.directory = directory.clone();
                     }
                     Ok(())
                 },
@@ -360,29 +341,6 @@ fn execute(cli: &Cli) -> Result<Value> {
                 actor,
                 |d| {
                     d.archived = archived;
-                    Ok(())
-                },
-            )?)?)
-        }
-        Operation::Curate {
-            id, if_match, by, ..
-        } => {
-            if actor == Actor::Agent {
-                return Err(Error::invalid("An agent cannot establish human curation"));
-            }
-            if by.trim().is_empty() {
-                return Err(Error::invalid("Curator name must not be empty"));
-            }
-            Ok(serde_json::to_value(workspace.update(
-                id,
-                if_match,
-                Actor::Human,
-                |d| {
-                    d.curation = Some(Curation {
-                        by: by.clone(),
-                        content_digest: d.content_digest(),
-                        at_ms: now_ms(),
-                    });
                     Ok(())
                 },
             )?)?)
@@ -485,15 +443,10 @@ fn print_human(value: &Value, command: &Operation) {
             let d = &value["document"];
             if !raw {
                 println!(
-                    "{}\nID: {}\nRevision: {}\n{} · {}\n",
+                    "{}\nID: {}\nRevision: {}\n{}\n",
                     d["title"].as_str().unwrap_or_default(),
                     d["id"].as_str().unwrap_or_default(),
                     value["revision"].as_str().unwrap_or_default(),
-                    if value["curated"] == true {
-                        "curated"
-                    } else {
-                        "uncurated"
-                    },
                     if d["archived"] == true {
                         "archived"
                     } else {
@@ -509,14 +462,9 @@ fn print_human(value: &Value, command: &Operation) {
         Operation::Search { .. } => {
             for d in value.as_array().unwrap() {
                 println!(
-                    "{}  {}{}{}",
+                    "{}  {}{}",
                     d["id"].as_str().unwrap(),
                     d["title"].as_str().unwrap(),
-                    if d["curated"] == true {
-                        " [curated]"
-                    } else {
-                        ""
-                    },
                     if d["archived"] == true {
                         " [archived]"
                     } else {

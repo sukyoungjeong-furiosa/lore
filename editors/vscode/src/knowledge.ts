@@ -17,6 +17,7 @@ export class Knowledge implements vscode.TreeDataProvider<KnowledgeEntry>, vscod
   regex = false;
   constructor(private readonly backends: Backends, private readonly documents: vscode.TreeDataProvider<LocalEntry>) {}
   refresh(): void { this.generation++; this.snapshot = undefined; this.event.fire(undefined); }
+  clearBrowsedTitles(): void { this.loadedBranches.clear(); }
   setFilter(value: string, regex: boolean): string | undefined {
     let matcher: ((title: string) => boolean) | undefined;
     if (value) {
@@ -46,23 +47,17 @@ export class Knowledge implements vscode.TreeDataProvider<KnowledgeEntry>, vscod
         const root = source.entry;
         if (root.warning || root.label) continue;
         const known = new Map<string, BackendEntry>();
-        if (this.backends.currentFile) {
-          for (const entry of await this.backends.getChildren(root)) {
-            if (entry.document) known.set(entry.document.reference.id, entry);
-          }
-        } else {
-          for (const branch of this.loadedBranches.values()) for (const entry of branch) {
-            if (entry.document && entry.backend === root.backend && entry.root.uri.toString() === root.root.uri.toString())
-              known.set(entry.document.reference.id, entry);
-          }
-          try {
-            const index = await call<Retrieved<{ documents: BackendDocument[] }>>(root.root.uri.fsPath, ['docs', 'search', root.backend, '']);
-            for (const document of index.value.documents) {
-              const previous = known.get(document.reference.id);
-              known.set(document.reference.id, { ...root, ...previous, document, cached: true });
-            }
-          } catch { /* Browsed titles remain filterable before a title index is fetched. */ }
+        for (const branch of this.loadedBranches.values()) for (const entry of branch) {
+          if (entry.document && entry.backend === root.backend && entry.root.uri.toString() === root.root.uri.toString())
+            known.set(entry.document.reference.id, entry);
         }
+        try {
+          const index = await call<Retrieved<{ documents: BackendDocument[] }>>(root.root.uri.fsPath, ['docs', 'search', root.backend, '']);
+          for (const document of index.value.documents) {
+            const previous = known.get(document.reference.id);
+            known.set(document.reference.id, { ...root, ...previous, discoveryPages: root.discoveryPages, document });
+          }
+        } catch { /* Browsed titles remain filterable before a title index is fetched. */ }
         children.set(source, [...known.values()].map(entry => ({ kind: 'backend', entry })));
       } else if (source.kind === 'local') {
         const known = new Map<string, LocalEntry>();
@@ -92,11 +87,10 @@ export class Knowledge implements vscode.TreeDataProvider<KnowledgeEntry>, vscod
     if (item.kind === 'backend') {
       const tree = this.backends.getTreeItem(item.entry);
       if (!item.entry.document && (vscode.workspace.workspaceFolders?.length || 0) > 1) tree.description = item.entry.root.name;
-      tree.contextValue = item.entry.document ? 'lore.backendDocument' : item.entry.warning ? 'lore.warning' : 'lore.backend';
+      tree.contextValue = item.entry.document ? (this.backends.childDiscovery(item.entry) ? 'lore.discoveryPage' : 'lore.backendDocument') : item.entry.warning ? 'lore.warning' : 'lore.backend';
       if (this.matcher) {
         tree.id = `filtered:${tree.id}`;
         tree.collapsibleState = item.entry.document ? vscode.TreeItemCollapsibleState.None : vscode.TreeItemCollapsibleState.Expanded;
-        if (item.entry.document && item.entry.count === undefined) tree.description = 'cached';
       }
       return tree;
     }
@@ -123,7 +117,7 @@ export class Knowledge implements vscode.TreeDataProvider<KnowledgeEntry>, vscod
     if (!item) return this.sources();
     if (item.kind === 'backend') {
       const entries = await this.backends.getChildren(item.entry);
-      if (!this.backends.currentFile) { this.loadedBranches.set(this.key(item.entry), entries); this.snapshot = undefined; }
+      this.loadedBranches.set(this.key(item.entry), entries); this.snapshot = undefined;
       return entries.map(entry => ({ kind: 'backend', entry }));
     }
     if (item.kind === 'document') return (await this.documents.getChildren(item.entry) || []).map(entry => ({ kind: 'document', entry }));

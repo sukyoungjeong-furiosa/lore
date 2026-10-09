@@ -1,10 +1,15 @@
 use lore_core::{
-    BackendDocument, DocumentContent, DocumentListing, DocumentReference, Error, ErrorKind,
-    KnowledgeBackend, Result,
+    BackendDocument, BackendUser, DocumentContent, DocumentListing, DocumentReference, Error,
+    ErrorKind, KnowledgeBackend, Result,
 };
 use reqwest::blocking::Client;
 use serde_json::{Value, json};
-use std::{collections::BTreeSet, io::Read, time::Duration};
+use std::{
+    cell::RefCell,
+    collections::{BTreeMap, BTreeSet},
+    io::Read,
+    time::Duration,
+};
 
 pub const API_VERSION: &str = "2026-03-11";
 
@@ -42,6 +47,9 @@ pub struct NotionBackend {
     token: String,
     api_url: String,
     client: Client,
+    users: RefCell<BTreeMap<String, BackendUser>>,
+    requests: std::cell::Cell<u64>,
+    request_observer: Option<Box<dyn Fn(u64)>>,
 }
 
 impl NotionBackend {
@@ -79,7 +87,16 @@ impl NotionBackend {
             token,
             api_url: api_url.trim_end_matches('/').to_owned(),
             client,
+            users: RefCell::new(BTreeMap::new()),
+            requests: std::cell::Cell::new(0),
+            request_observer: None,
         })
+    }
+
+    /// Reports attempted HTTP requests, including rate-limit retries, without request details.
+    pub fn with_request_observer(mut self, observer: impl Fn(u64) + 'static) -> Self {
+        self.request_observer = Some(Box::new(observer));
+        self
     }
 
     fn reference(&self, id: &str) -> Result<DocumentReference> {
@@ -98,6 +115,10 @@ impl NotionBackend {
 
     fn request(&self, path: &str, body: Option<&Value>) -> Result<Value> {
         for attempt in 0..3 {
+            self.requests.set(self.requests.get() + 1);
+            if let Some(observer) = &self.request_observer {
+                observer(self.requests.get());
+            }
             let url = format!("{}{path}", self.api_url);
             let request = match body {
                 Some(body) => self.client.post(&url).json(body),
@@ -204,7 +225,32 @@ impl NotionBackend {
         Ok(result)
     }
 
-    fn summary(&self, page: &Value) -> Result<BackendDocument> {
+    fn user(&self, value: &Value, resolve_name: bool) -> Option<BackendUser> {
+        let id = value["id"].as_str()?;
+        let mut user = BackendUser {
+            id: id.to_owned(),
+            name: value["name"].as_str().map(str::to_owned),
+        };
+        if resolve_name && user.name.is_none() {
+            if let Some(cached) = self.users.borrow().get(id) {
+                return Some(cached.clone());
+            }
+            if let Ok(id) = uuid::Uuid::parse_str(id)
+                && let Ok(details) = self.request(&format!("/users/{id}"), None)
+                && details["id"].as_str() == Some(user.id.as_str())
+            {
+                user.name = details["name"].as_str().map(str::to_owned);
+            }
+        }
+        if resolve_name {
+            self.users
+                .borrow_mut()
+                .insert(user.id.clone(), user.clone());
+        }
+        Some(user)
+    }
+
+    fn summary(&self, page: &Value, resolve_user_names: bool) -> Result<BackendDocument> {
         let id = text(page, "id")?;
         let properties = page["properties"]
             .as_object()
@@ -234,6 +280,9 @@ impl NotionBackend {
                 .map(str::to_owned)
                 .unwrap_or_else(|| notion_url(id)),
             observed_revision: page["last_edited_time"].as_str().map(str::to_owned),
+            last_modified: page["last_edited_time"].as_str().map(str::to_owned),
+            created_by: self.user(&page["created_by"], resolve_user_names),
+            last_edited_by: self.user(&page["last_edited_by"], resolve_user_names),
         })
     }
 
@@ -246,7 +295,7 @@ impl NotionBackend {
         for source in sources {
             let id = page_id(text(source, "id")?)?;
             for page in self.listing(&format!("/data_sources/{id}/query"), true)? {
-                pages.push(self.summary(&page)?);
+                pages.push(self.summary(&page, false)?);
             }
         }
         Ok(pages)
@@ -256,7 +305,7 @@ impl NotionBackend {
 impl KnowledgeBackend for NotionBackend {
     fn metadata(&self, reference: &DocumentReference) -> Result<BackendDocument> {
         let id = self.checked_id(reference)?;
-        let document = self.summary(&self.request(&format!("/pages/{id}"), None)?)?;
+        let document = self.summary(&self.request(&format!("/pages/{id}"), None)?, true)?;
         if document.reference.id != id {
             return Err(Error::new(
                 ErrorKind::Corrupt,
@@ -293,15 +342,17 @@ impl KnowledgeBackend for NotionBackend {
                 match text(&row, "type")? {
                     "child_page" => {
                         let title = text(&row["child_page"], "title")?.to_owned();
-                        documents.insert(
-                            block_id.clone(),
-                            BackendDocument {
-                                reference: self.reference(&block_id)?,
-                                title,
-                                url: notion_url(&block_id),
-                                observed_revision: None,
-                            },
-                        );
+                        let reference = self.reference(&block_id)?;
+                        let document = BackendDocument {
+                            reference,
+                            title,
+                            url: notion_url(&block_id),
+                            observed_revision: None,
+                            last_modified: None,
+                            created_by: None,
+                            last_edited_by: None,
+                        };
+                        documents.insert(block_id.clone(), document);
                     }
                     "child_database" => match self.database_pages(&block_id) {
                         Ok(pages) => {
@@ -311,6 +362,7 @@ impl KnowledgeBackend for NotionBackend {
                         }
                         Err(error) => warnings.push(format!("Database {block_id}: {error}")),
                     },
+                    "link_to_page" | "link_preview" => {}
                     _ if row["has_children"] == true => pending.push(block_id),
                     "unsupported" => {
                         warnings.push(format!("Unsupported block {block_id} may hide documents"))
@@ -355,6 +407,8 @@ impl KnowledgeBackend for NotionBackend {
         let changed = document.observed_revision != after.observed_revision;
         if changed {
             document.observed_revision = None;
+            document.last_modified = None;
+            document.last_edited_by = None;
             warnings.push(
                 "Page changed during retrieval; content and metadata may describe different states"
                     .into(),

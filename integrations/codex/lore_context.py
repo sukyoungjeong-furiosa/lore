@@ -109,7 +109,7 @@ def refresh(repo):
         results = []
         operations = [('mappings', ['map', 'fetch', '--max-age-seconds', '300'], 15)]
         for backend in run(repo, 'backend', 'list'):
-            operations.append((backend, ['docs', 'fetch', backend, '--max-age-seconds', '900'], 300))
+            operations.append((backend, ['docs', 'fetch', backend, '--max-age-seconds', '900'], 900))
         for source, args, timeout in operations:
             try:
                 value = run(repo, *args, timeout=timeout)

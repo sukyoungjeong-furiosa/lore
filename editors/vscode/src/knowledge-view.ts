@@ -57,8 +57,6 @@ export class KnowledgeView implements vscode.WebviewViewProvider, vscode.Disposa
       this.expanded.set(message.id, message.expanded); await this.render();
     } else if (message.type === 'open' && item.command) {
       await vscode.commands.executeCommand(item.command.command, ...(item.command.arguments || []));
-    } else if (message.type === 'fetch' && ['lore.backend', 'lore.backendDocument'].includes(item.contextValue || '')) {
-      await vscode.commands.executeCommand('lore.fetchBackend', entry);
     }
   }
   private key(entry: KnowledgeEntry, parent: string): string {

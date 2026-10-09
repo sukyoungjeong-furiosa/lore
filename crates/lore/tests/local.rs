@@ -110,18 +110,107 @@ fn text<'a>(v: &'a Value, key: &str) -> &'a str {
 }
 
 #[test]
-fn document_history_cas_curation_and_archive() {
+fn document_directories_preserve_identity_links_and_anchors() {
+    let s = Setup::new();
+    let created = s.ok(&["create", "Scheduler", "--directory", "Compiler/Scheduler"]);
+    let id = text(&created["document"], "id");
+    let linked = parse(s.run_at(
+        &s.repo(),
+        &["create", "Related", "--stdin"],
+        Some(&format!("[[id:{id}|Scheduler]]")),
+    ));
+    let attached = s.ok(&["attach", id, "compiler/scheduler.py:2-3"]);
+    let moved = s.ok(&[
+        "edit",
+        id,
+        "--if-match",
+        text(&attached, "revision"),
+        "--directory",
+        "Architecture/Execution",
+    ]);
+    assert_eq!(moved["document"]["id"], id);
+    assert_eq!(
+        moved["document"]["anchors"],
+        attached["document"]["anchors"]
+    );
+    assert_eq!(
+        moved["document"]["content"],
+        attached["document"]["content"]
+    );
+    assert_eq!(
+        moved["document"]["authorship"],
+        attached["document"]["authorship"]
+    );
+    assert_eq!(
+        s.ok(&["links", text(&linked["document"], "id")])["outgoing"][0]["matches"][0]["id"],
+        id
+    );
+    s.ok(&["create", "Sibling", "--directory", "ArchitectureExtra"]);
+    assert_eq!(
+        s.ok(&["search", "--directory", "Architecture"])
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        s.ok(&["search", "--directory", ""])
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
+    assert!(
+        !s.run(&[
+            "edit",
+            id,
+            "--if-match",
+            text(&moved, "revision"),
+            "--directory",
+            "../outside"
+        ])
+        .status
+        .success()
+    );
+    assert_eq!(s.ok(&["show", id])["revision"], moved["revision"]);
+    let root = s.ok(&[
+        "edit",
+        id,
+        "--if-match",
+        text(&moved, "revision"),
+        "--directory",
+        "",
+    ]);
+    assert_eq!(root["document"]["directory"], "");
+    assert_eq!(s.ok(&["history", id]).as_array().unwrap().len(), 4);
+}
+
+#[test]
+fn document_history_cas_and_archive() {
     let s = Setup::new();
     let created = s.ok(&[
         "--author",
         "agent",
         "create",
         "Scheduler Design",
-        "--tag",
+        "--directory",
         "design",
     ]);
     let id = text(&created["document"], "id");
     let first = text(&created, "revision");
+    assert_eq!(
+        created["last_modified_ms"],
+        s.ok(&["history", id])[0]["value"]["at_ms"]
+    );
+    let unchanged = s.ok(&[
+        "edit",
+        id,
+        "--if-match",
+        first,
+        "--title",
+        "Scheduler Design",
+    ]);
+    assert_eq!(unchanged["last_modified_ms"], created["last_modified_ms"]);
     let attached = s.ok(&[
         "attach",
         id,
@@ -129,40 +218,22 @@ fn document_history_cas_curation_and_archive() {
         "--if-match",
         first,
     ]);
-    let reviewed = s.ok(&[
-        "curate",
-        id,
-        "--if-match",
-        text(&attached, "revision"),
-        "--human",
-        "--by",
-        "Reviewer",
-    ]);
-    assert_eq!(reviewed["curated"], true);
-    assert!(
-        !s.run(&[
-            "--author",
-            "agent",
-            "curate",
-            id,
-            "--if-match",
-            text(&reviewed, "revision"),
-            "--human",
-            "--by",
-            "Fake"
-        ])
-        .status
-        .success()
+    assert_eq!(
+        attached["last_modified_ms"],
+        s.ok(&["history", id])[0]["value"]["at_ms"]
+    );
+    assert_eq!(
+        s.ok(&["show", id, "--revision", first])["last_modified_ms"],
+        created["last_modified_ms"]
     );
     let title = s.ok(&[
         "edit",
         id,
         "--if-match",
-        text(&reviewed, "revision"),
+        text(&attached, "revision"),
         "--title",
         "Planner Design",
     ]);
-    assert_eq!(title["curated"], true);
     let stale = s.run(&["edit", id, "--if-match", first, "--title", "lost update"]);
     assert_eq!(stale.status.code(), Some(3));
     assert_eq!(
@@ -174,20 +245,12 @@ fn document_history_cas_curation_and_archive() {
         text(&title, "revision"),
         "# Planner\nKeep scheduling deterministic.\n",
     );
-    assert_eq!(changed["curated"], false);
     assert_eq!(
         s.ok(&["search", "deterministic"]).as_array().unwrap().len(),
         1
     );
     assert_eq!(
         s.ok(&["search", "--exclude-agent"])
-            .as_array()
-            .unwrap()
-            .len(),
-        0
-    );
-    assert_eq!(
-        s.ok(&["search", "--curated-only"])
             .as_array()
             .unwrap()
             .len(),
@@ -204,7 +267,7 @@ fn document_history_cas_curation_and_archive() {
     );
     assert_eq!(s.ok(&["show", id])["document"]["archived"], true);
     s.ok(&["restore", id, "--if-match", text(&archived, "revision")]);
-    assert_eq!(s.ok(&["history", id]).as_array().unwrap().len(), 7);
+    assert_eq!(s.ok(&["history", id]).as_array().unwrap().len(), 6);
     assert_eq!(
         s.ok(&["show", id, "--revision", first])["document"]["title"],
         "Scheduler Design"

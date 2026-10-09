@@ -34,7 +34,8 @@
       },
       {
         "command": "lore.attach",
-        "title": "Lore: Attach Document to Selection"
+        "title": "Lore: Link Document to Code Selection",
+        "icon": "$(link)"
       },
       {
         "command": "lore.search",
@@ -47,18 +48,14 @@
       },
       {
         "command": "lore.refresh",
-        "title": "Lore: Refresh",
+        "title": "Lore: Refresh Knowledge Lists",
         "icon": "$(refresh)"
       },
       {
-        "command": "lore.toggleCurrentFile",
-        "title": "Lore: Toggle Current File Only",
-        "icon": "$(file-code)"
-      },
-      {
         "command": "lore.toggleArchived",
-        "title": "Lore: Toggle Archived Documents",
-        "icon": "$(archive)"
+        "title": "Lore: Include Archived Documents",
+        "icon": "$(archive)",
+        "toggled": "lore.includeArchived"
       },
       {
         "command": "lore.connectNotion",
@@ -78,17 +75,13 @@
         "title": "Lore: Index Notion Titles"
       },
       {
-        "command": "lore.attachNotion",
-        "title": "Lore: Link Notion Document to Selection"
-      },
-      {
         "command": "lore.toggleCached",
         "title": "Lore: Toggle Offline Backend Reads",
         "icon": "$(database)"
       },
       {
         "command": "lore.fetchBackend",
-        "title": "Lore: Fetch from Backend",
+        "title": "Lore: Fetch Document List",
         "icon": "$(cloud-download)"
       },
       {
@@ -97,15 +90,56 @@
       },
       {
         "command": "lore.reloadDocument",
-        "title": "Lore: Reload from Notion",
+        "title": "Lore: Reload Document",
         "icon": "$(refresh)",
-        "enablement": "lore.readerIsBackendDocument"
+        "enablement": "lore.readerHasDocument"
       },
       {
         "command": "lore.openDocumentInNotion",
         "title": "Lore: Open in Notion",
         "icon": "$(link-external)",
         "enablement": "lore.readerIsBackendDocument"
+      },
+      {
+        "command": "lore.refreshMappings",
+        "title": "Lore: Refresh Mappings",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "lore.enableChildDiscovery",
+        "title": "Lore: Discover Child Documents"
+      },
+      {
+        "command": "lore.disableChildDiscovery",
+        "title": "Lore: Stop Discovering Child Documents"
+      },
+      {
+        "command": "lore.toggleChildDiscovery",
+        "title": "Lore: Discover Child Documents",
+        "toggled": "lore.readerChildDiscovery",
+        "enablement": "lore.readerIsBackendDocument"
+      },
+      {
+        "command": "lore.editDocument",
+        "title": "Lore: Edit Document",
+        "icon": "$(edit)",
+        "enablement": "lore.readerIsLocalDocument && !lore.readerIsHistorical && !lore.readerEditing && !lore.readerBusy"
+      },
+      {
+        "command": "lore.archiveDocument",
+        "title": "Lore: Archive Document",
+        "enablement": "lore.readerIsLocalDocument && !lore.readerIsHistorical && !lore.readerDirty && !lore.readerBusy"
+      },
+      {
+        "command": "lore.restoreDocument",
+        "title": "Lore: Restore Document",
+        "enablement": "lore.readerIsLocalDocument && !lore.readerIsHistorical && !lore.readerDirty && !lore.readerBusy"
+      },
+      {
+        "command": "lore.documentHistory",
+        "title": "Lore: Document History",
+        "icon": "$(history)",
+        "enablement": "lore.readerIsLocalDocument && !lore.readerBusy"
       }
     ],
     "viewsContainers": {
@@ -153,41 +187,46 @@
           "group": "navigation"
         },
         {
-          "command": "lore.connectNotion",
-          "when": "view == lore.knowledge"
-        },
-        {
-          "command": "lore.fetchBackend",
-          "when": "view == lore.knowledge"
-        },
-        {
-          "command": "lore.toggleCurrentFile",
-          "when": "view == lore.knowledge"
-        },
-        {
           "command": "lore.toggleArchived",
           "when": "view == lore.knowledge"
         },
         {
-          "command": "lore.refresh",
+          "command": "lore.refreshMappings",
           "when": "view == lore.mappings"
         },
         {
           "command": "lore.reloadDocument",
-          "when": "view == lore.reader && lore.readerIsBackendDocument",
+          "when": "view == lore.reader && lore.readerHasDocument",
           "group": "navigation@1"
         },
         {
           "command": "lore.openDocumentInNotion",
           "when": "view == lore.reader && lore.readerIsBackendDocument",
           "group": "navigation@2"
+        },
+        {
+          "command": "lore.toggleChildDiscovery",
+          "when": "view == lore.reader && lore.readerIsBackendDocument"
+        },
+        {
+          "command": "lore.editDocument",
+          "when": "view == lore.reader && lore.readerIsLocalDocument && !lore.readerIsHistorical",
+          "group": "navigation@2"
+        },
+        {
+          "command": "lore.archiveDocument",
+          "when": "view == lore.reader && lore.readerIsLocalDocument && !lore.readerArchived"
+        },
+        {
+          "command": "lore.restoreDocument",
+          "when": "view == lore.reader && lore.readerIsLocalDocument && lore.readerArchived"
+        },
+        {
+          "command": "lore.documentHistory",
+          "when": "view == lore.reader && lore.readerIsLocalDocument"
         }
       ],
       "editor/context": [
-        {
-          "command": "lore.attachNotion",
-          "group": "lore"
-        },
         {
           "command": "lore.attach",
           "group": "lore"
@@ -195,13 +234,18 @@
       ],
       "webview/context": [
         {
-          "command": "lore.fetchBackend",
-          "when": "webviewId == lore.knowledge && (webviewSection == lore.backend || webviewSection == lore.backendDocument)",
+          "command": "lore.fetchBackendContent",
+          "when": "webviewId == lore.knowledge && webviewSection == lore.backend",
           "group": "lore"
         },
         {
-          "command": "lore.fetchBackendContent",
-          "when": "webviewId == lore.knowledge && webviewSection == lore.backend",
+          "command": "lore.enableChildDiscovery",
+          "when": "webviewId == lore.knowledge && webviewSection == lore.backendDocument",
+          "group": "lore"
+        },
+        {
+          "command": "lore.disableChildDiscovery",
+          "when": "webviewId == lore.knowledge && webviewSection == lore.discoveryPage",
           "group": "lore"
         }
       ]

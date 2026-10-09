@@ -57,10 +57,6 @@
       twistie.addEventListener('click', event => { event.stopPropagation(); element.focus(); toggle(row); }); element.append(twistie, icon(row.icon));
       const label = document.createElement('span'); label.className = 'label'; label.textContent = row.label; element.append(label);
       if (row.description) { const description = document.createElement('span'); description.className = 'description'; description.textContent = row.description; element.append(description); }
-      if (['lore.backend', 'lore.backendDocument'].includes(row.context)) {
-        const fetch = document.createElement('button'); fetch.className = 'fetch'; fetch.textContent = '↓'; fetch.title = 'Fetch from Backend'; fetch.setAttribute('aria-label', 'Fetch from Backend');
-        fetch.addEventListener('click', event => { event.stopPropagation(); element.focus(); api.postMessage({ type: 'fetch', id: row.id }); }); element.append(fetch);
-      }
       element.addEventListener('click', () => { element.focus(); activate(row); });
       element.addEventListener('focus', () => {
         focused = row.id;

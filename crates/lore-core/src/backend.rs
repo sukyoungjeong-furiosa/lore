@@ -19,11 +19,24 @@ impl DocumentReference {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BackendUser {
+    pub id: String,
+    pub name: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BackendDocument {
     pub reference: DocumentReference,
     pub title: String,
     pub url: String,
     pub observed_revision: Option<String>,
+    /// Backend-reported modification time in ISO 8601 format, when available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_modified: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_by: Option<BackendUser>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_edited_by: Option<BackendUser>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

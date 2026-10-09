@@ -147,9 +147,9 @@ impl Workspace {
             if let LoreDocument::Backend { reference } = &item.document {
                 match BackendRegistry::new(home)
                     .cache(&reference.backend)
-                    .metadata(None, reference)
+                    .cached_title(reference)
                 {
-                    Ok(metadata) => item.title = Some(metadata.value.title),
+                    Ok(title) => item.title = Some(title),
                     Err(error) if error.kind == ErrorKind::NotCached => {}
                     Err(error) => return Err(error),
                 }

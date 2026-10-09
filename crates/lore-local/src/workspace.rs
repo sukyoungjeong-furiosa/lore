@@ -54,9 +54,8 @@ pub struct SearchHit {
     pub id: DocumentId,
     pub revision: RevisionId,
     pub title: String,
-    pub tags: Vec<String>,
+    pub directory: String,
     pub authorship: Vec<Actor>,
-    pub curated: bool,
     pub archived: bool,
     pub snippet: String,
     pub score: usize,
@@ -65,9 +64,8 @@ pub struct SearchHit {
 #[derive(Default)]
 pub struct SearchOptions {
     pub include_archived: bool,
-    pub curated_only: bool,
     pub exclude_agent: bool,
-    pub tag: Option<String>,
+    pub directory: Option<String>,
 }
 
 impl Workspace {
@@ -250,7 +248,7 @@ impl Workspace {
             if !include_archived && revision.document.archived {
                 continue;
             }
-            found.push(DocumentView::new(active.revision, revision.document));
+            found.push(DocumentView::new(active.revision, revision));
         }
         found.sort_by(|a, b| {
             a.document
@@ -272,7 +270,7 @@ impl Workspace {
         })?;
         let selected = revision.unwrap_or(&active.revision);
         let revision = self.repository.load(id, selected)?;
-        Ok(DocumentView::new(selected.clone(), revision.document))
+        Ok(DocumentView::new(selected.clone(), revision))
     }
 
     pub fn create(&self, document: Document, actor: Actor) -> Result<DocumentView> {
@@ -299,7 +297,7 @@ impl Workspace {
             },
         );
         atomic_write(&self.state_path, &serde_json::to_vec_pretty(&state)?)?;
-        Ok(DocumentView::new(id, document))
+        Ok(DocumentView::new(id, revision))
     }
 
     /// Applies an edit only while the active revision still matches the caller's observation.
@@ -337,8 +335,9 @@ impl Workspace {
         }
         document.validate()?;
         if document == previous.document {
-            return Ok(DocumentView::new(active.revision.clone(), document));
+            return Ok(DocumentView::new(active.revision.clone(), previous));
         }
+        document.retire_legacy_metadata();
         let revision = Revision {
             parent: Some(active.revision.clone()),
             actor,
@@ -348,7 +347,7 @@ impl Workspace {
         let revision_id = self.repository.record(&revision)?;
         active.revision = revision_id.clone();
         atomic_write(&self.state_path, &serde_json::to_vec_pretty(&state)?)?;
-        Ok(DocumentView::new(revision_id, document))
+        Ok(DocumentView::new(revision_id, revision))
     }
 
     pub fn history(&self, id: &DocumentId) -> Result<Vec<(RevisionId, Revision)>> {
@@ -380,30 +379,32 @@ impl Workspace {
             shared_baseline: None,
         });
         atomic_write(&self.state_path, &serde_json::to_vec_pretty(&state)?)?;
-        Ok(DocumentView::new(revision.clone(), value.document))
+        Ok(DocumentView::new(revision.clone(), value))
     }
 
     pub fn search(&self, query: &str, options: &SearchOptions) -> Result<Vec<SearchHit>> {
+        if let Some(directory) = &options.directory
+            && !directory.is_empty()
+        {
+            lore_core::validate_relative_path(directory)?;
+        }
         let terms: Vec<_> = query.split_whitespace().map(str::to_lowercase).collect();
         let mut hits = vec![];
         for view in self.list(options.include_archived)? {
             let d = &view.document;
-            if options.curated_only && !view.curated {
-                continue;
-            }
             if options.exclude_agent && d.authorship.contains(&Actor::Agent) {
                 continue;
             }
-            if options
-                .tag
-                .as_ref()
-                .is_some_and(|tag| !d.tags.contains(tag))
-            {
+            if options.directory.as_ref().is_some_and(|directory| {
+                !directory.is_empty()
+                    && d.directory != *directory
+                    && !d.directory.starts_with(&format!("{directory}/"))
+            }) {
                 continue;
             }
             let title = d.title.to_lowercase();
             let content = d.content.to_lowercase();
-            let tags = d.tags.join(" ").to_lowercase();
+            let directory = d.directory.to_lowercase();
             let paths = d
                 .anchors
                 .iter()
@@ -414,7 +415,7 @@ impl Workspace {
             if terms.iter().any(|t| {
                 !title.contains(t)
                     && !content.contains(t)
-                    && !tags.contains(t)
+                    && !directory.contains(t)
                     && !paths.contains(t)
             }) {
                 continue;
@@ -424,7 +425,7 @@ impl Workspace {
                 .map(|t| {
                     if title.contains(t) {
                         20
-                    } else if tags.contains(t) {
+                    } else if directory.contains(t) {
                         8
                     } else if paths.contains(t) {
                         5
@@ -437,9 +438,8 @@ impl Workspace {
                 id: d.id.clone(),
                 revision: view.revision,
                 title: d.title.clone(),
-                tags: d.tags.clone(),
+                directory: d.directory.clone(),
                 authorship: d.authorship.clone(),
-                curated: view.curated,
                 archived: d.archived,
                 snippet: d.content.chars().take(200).collect(),
                 score,

@@ -24,7 +24,7 @@ lore backend add-notion team --root <root-page-url-or-id>
 
 For CLI use, set `NOTION_TOKEN` in the invoking process's environment. `--token-env` selects another variable; the configuration stores its name, never its value. Internal connection tokens, personal access tokens, and valid OAuth access tokens use the same bearer transport. OAuth authorization and refresh are not implemented.
 
-An internal connection needs read-content capability and access to the root page. Access to children is inherited. A personal access token uses its creator's permissions, subject to workspace policy. Configured roots define discovery scope, not an additional authorization boundary.
+An internal connection needs read-content capability and access to the root page. Access to children is inherited. A personal access token uses its creator's permissions, subject to workspace policy. Configured roots are entry pages, not an additional authorization boundary. Pages remain readable independently of discovery settings. Child discovery must be enabled for each desired page and does not recurse into its documents.
 
 For VS Code, install the local VSIX and set `lore.executable` if needed. Use **Lore: Set Notion Connection Token** once for the configured backend. CLI, editor, and hooks share the saved credential when using the same Lore home on the same machine. Existing editor-only credentials migrate automatically on activation or document access; migration failure preserves the old token. **Lore: Connect Notion** configures a new backend and prompts for its credential.
 
@@ -36,9 +36,10 @@ The backend name is a stable document-reference namespace. Preserve it across cr
 
 ```bash
 lore docs browse team                 # Configured roots
-lore docs browse team <page-id>       # Contained documents, without body import
+lore docs discovery team <page-id> --enable  # Enable direct-child discovery
+lore docs browse team <page-id>       # Immediate documents of an enabled page
 lore docs show team <page-id>         # Cache first; retrieve a missing body once
-lore docs fetch team                  # Refresh tree and titles, without bodies
+lore docs fetch team                  # Refresh entry titles and enabled lists, without bodies
 lore docs fetch team <page-id>        # Refresh one body
 lore docs fetch team --with-content   # Explicit bulk body cache for offline reading
 lore docs search team scheduler       # Search cached titles
@@ -54,9 +55,9 @@ lore map publish <mapping-id> --if-match <revision>
 lore map fetch
 ```
 
-In VS Code, expand **Knowledge**, click a document to read it below the trees in **Document**, and follow Notion page links. **Reload from Notion** in the view title refreshes the current body. Use **Lore: Link Notion Document to Selection** from the code editor to create mappings. **Open in Notion** delegates document editing to the backend. CodeLens returns from code to the connected document. **Mappings** shows the selected document’s code locations and navigates directly to code. Mapping editing, history, and archive/restore remain CLI operations.
+In VS Code, expand **Knowledge**, click a document to read it below the trees in **Document**, and follow Notion page links. **Reload Document** in the view title refreshes the current body and its metadata. The reader displays the source modification time, creator, and last editor when available. Use **Discover Child Documents** on a page to enable its immediate list. Configured entry pages start with discovery disabled. The **Knowledge** refresh button updates entry-page titles and explicitly enabled lists, without recursively exploring child pages or retrieving their bodies. Use **Lore: Link Document to Code Selection** from the code editor connects the selected local or backend document. **Open in Notion** delegates document editing to the backend. CodeLens returns from code to the connected document. **Mappings** shows the selected document’s code locations and navigates directly to code. Its title includes the recorded connection count even while collapsed. Mapping editing, history, and archive/restore remain CLI operations.
 
-The current-file toggle uses saved code and includes recorded references and known projections. Cached title observations may label connections; missing cached titles fall back to stable page IDs. Dirty editor buffers must be saved before linking or projecting.
+Cached title observations may label connections; missing cached titles fall back to stable page IDs. Dirty editor buffers must be saved before linking or projecting.
 
 The Knowledge view's filter button toggles an inline input row beneath its title. Input continuously filters titles without Enter or an apply step; hiding the row retains its active query. Its query and regex mode remain active when focus moves to code or documents; emptying the input restores the tree. The `.*` toggle enables case-insensitive regular expressions. Nonmatching documents and empty groups disappear, and matches appear directly under their source. Invalid regex preserves the last valid results. Filtering uses local documents, browsed backend titles, and existing cached title indexes without contacting Notion.
 
@@ -73,7 +74,7 @@ Glob scopes appear beside precise locations in the selected document's Mappings 
 
 ## Limits
 
-- Discovery is scoped to configured roots and accessible children. Nested block or database failures produce warnings; title indexes report incomplete traversal.
+- Discovery is opt-in per page and covers directly contained documents only. Nested block or database failures produce warnings; title indexes report incomplete discovery. Links support reading without recursive discovery.
 - CLI backend search covers cached titles, not full document bodies. Indexing can take time and is explicit. The editor filter covers locally known titles; it does not discover uncached backend documents.
 - Reads use cached observations by default; a cache miss retrieves once. `--cached` prohibits retrieval, while `--refresh` or `docs fetch` forces it. Failed refreshes preserve previous observations and report failure. Caches are derivative snapshots, not Lore-owned document revisions. See [Document Cache and Fetch](../decisions.md#document-cache-and-fetch).
 - Notion Markdown is previewed safely; unsupported native blocks, images, and partial content remain available in Notion. It is not a full Notion editor.
@@ -82,6 +83,6 @@ Glob scopes appear beside precise locations in the selected document's Mappings 
 
 ## Verification
 
-Rust integration tests exercise paginated discovery, nested pages and data sources, lazy bodies, partial content, failures, offline caches, mapping history/CAS, and worktree isolation with renamed paths. An isolated VS Code test uses a mock Notion API and real editor/webview to verify browsing unmapped pages, embedded reading, links, CodeLens, caching, document-scoped code locations, and navigation after renames. Actual workspace access requires separately supplied credentials.
+Rust integration tests exercise paginated direct-child discovery, explicit opt-in, page containers and data sources, lazy bodies, partial content, failures, offline caches, mapping history/CAS, and worktree isolation with renamed paths. An isolated VS Code test uses a mock Notion API and real editor/webview to verify browsing unmapped pages, embedded reading, links, CodeLens, caching, document-scoped code locations, and navigation after renames. Actual workspace access requires separately supplied credentials.
 
 Context tests cover shared and remote discovery without activation, background metadata refresh, automatic worktree preparation, local overlay isolation, stable document identity, concurrent introduction, output limits, agent/session isolation, archiving, and compatibility with existing immutable mapping revisions.

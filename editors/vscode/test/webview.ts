@@ -23,7 +23,7 @@ export class Webview {
     await this.cdp.send('Target.sendMessageToTarget', { sessionId: this.session, message: JSON.stringify({ id, method, params }) });
     return result;
   }
-  static async connect(browser: Browser, selector = '#edit'): Promise<Webview> {
+  static async connect(browser: Browser, selector = '#title'): Promise<Webview> {
     const cdp = await browser.newBrowserCDPSession();
     const { targetInfos } = await cdp.send('Target.getTargets');
     const targets = targetInfos.filter(t => t.type === 'iframe' && t.url.includes('extensionId=lore-local.lore'));

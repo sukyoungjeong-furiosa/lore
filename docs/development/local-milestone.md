@@ -20,15 +20,15 @@ The file-backed `KnowledgeRepository`, Git `CodeRepository`, and `AnchorResolver
 
 ## Behavior and Limits
 
-- Documents have independent identity and can exist without code anchors. Multiple tags organize documents.
+- Documents have independent identity and can exist without code anchors. Directory paths organize documents in a tree.
 - Wiki links use `[[Title]]` or `[[id:<document-id>|label]]`. Duplicate titles require selection; stable ID links survive renaming. Discovery and backlinks cover active local documents.
 - Edit operations require the observed revision. Concurrent edits conflict without discarding drafts or recorded changes.
-- Authorship is recorded separately from explicit human curation. Curation applies to the body and its format; changing the body makes that curation inapplicable. Title, tags, anchors, and archive changes preserve it.
-- Search excludes archives by default; archived documents remain directly readable. Optional filters select human-curated content or exclude documents with recorded agent contributions, including mixed authorship.
+- Authorship records human and agent contributions independently of document organization and archive state.
+- Search excludes archives by default; archived documents remain directly readable. An optional filter excludes documents with recorded agent contributions, including mixed authorship.
 - The text resolver preserves unchanged files' recorded locations. Otherwise it searches exact excerpts using Git rename discovery and requested paths. Competing matches remain alternatives. Major code transformations may require a future agent resolver.
 - Code references capture committed or uncommitted UTF-8 text on disk. VS Code does not project unsaved code buffers in this milestone.
 - Markdown is the first supported editing/rendering format. The model carries a format identifier for future formats.
-- CLI author and curator records are self-declared local information, not authenticated identities.
+- CLI author records are self-declared local information, not authenticated identities.
 
 ## Validation
 

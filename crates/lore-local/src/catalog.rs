@@ -249,9 +249,9 @@ impl Workspace {
         let view = MappingSummaryView::from(self.read_mapping(id, None)?);
         let title = match BackendRegistry::new(home)
             .cache(&view.record.mapping.document.backend)
-            .metadata(None, &view.record.mapping.document)
+            .cached_title(&view.record.mapping.document)
         {
-            Ok(metadata) => Some(metadata.value.title),
+            Ok(title) => Some(title),
             Err(error) if error.kind == ErrorKind::NotCached => None,
             Err(error) => return Err(error),
         };

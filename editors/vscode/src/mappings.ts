@@ -11,12 +11,48 @@ export interface MappingEntry {
   mapping?: string;
   location?: Location;
 }
+interface ConnectionsState { view?: View; mappings?: LocatedMapping[] }
 export class Mappings implements vscode.TreeDataProvider<MappingEntry>, vscode.Disposable {
   private event = new vscode.EventEmitter<MappingEntry | undefined>();
   readonly onDidChangeTreeData = this.event.event;
+  private summaryEvent = new vscode.EventEmitter<void>();
+  readonly onDidChangeSummary = this.summaryEvent.event;
+  private state?: Promise<ConnectionsState>;
+  private generation = 0;
+  summary?: { count?: number; unavailable?: boolean };
   selected?: SelectedDocument;
   select(document?: SelectedDocument): void { this.selected = document; this.refresh(); }
-  refresh(): void { this.event.fire(undefined); }
+  refresh(): void {
+    const selected = this.selected;
+    const generation = ++this.generation;
+    this.summary = selected ? {} : undefined;
+    this.state = selected ? this.load(selected) : undefined;
+    void this.state?.then(state => {
+      if (generation !== this.generation) return;
+      const count = state.view ? state.view.document.anchors.length : (state.mappings || []).reduce((n, { view }) => n + view.record.mapping.anchors.length + (view.record.mapping.scopes || []).length, 0);
+      this.summary = { count }; this.summaryEvent.fire();
+    }, () => {
+      if (generation !== this.generation) return;
+      this.summary = { unavailable: true }; this.summaryEvent.fire();
+    });
+    this.summaryEvent.fire();
+    this.event.fire(undefined);
+  }
+  get description(): string | undefined {
+    if (!this.selected) return undefined;
+    const count = this.summary?.count;
+    const status = this.summary?.unavailable ? 'Code links unavailable' : count === undefined ? 'Loading code links…' : `${count} code link${count === 1 ? '' : 's'}`;
+    return `${this.selected.title} · ${status}`;
+  }
+  private async load(selected: SelectedDocument): Promise<ConnectionsState> {
+    if (selected.source.kind === 'backend') {
+      const ref = selected.source.reference;
+      const listed = await call<{ mappings: LocatedMapping[] }>(selected.root, ['map', 'ls']);
+      return { mappings: listed.mappings.filter(({ view }) => view.record.mapping.document.backend === ref.backend && view.record.mapping.document.id === ref.id) };
+    }
+    const args = ['show', selected.source.id]; if (selected.source.revision) args.push('--revision', selected.source.revision);
+    return { view: await call<View>(selected.root, args) };
+  }
   getTreeItem(entry: MappingEntry): vscode.TreeItem {
     const tree = new vscode.TreeItem(entry.label);
     tree.description = entry.description;
@@ -30,28 +66,26 @@ export class Mappings implements vscode.TreeDataProvider<MappingEntry>, vscode.D
   async getChildren(entry?: MappingEntry): Promise<MappingEntry[]> {
     if (entry) return [];
     const selected = this.selected;
+    const generation = this.generation;
     if (!selected) return [{ label: 'Select a document to see connected code' }];
     try {
+      const state = await this.state!;
       let result: MappingEntry[];
       if (selected.source.kind === 'backend') {
-        const ref = selected.source.reference;
-        const listed = await call<{ mappings: LocatedMapping[] }>(selected.root, ['map', 'ls']);
-        const related = listed.mappings.filter(({ view }) => view.record.mapping.document.backend === ref.backend && view.record.mapping.document.id === ref.id);
-        const located = await Promise.all(related.map(({ view }) => call<LocatedMapping>(selected.root, ['map', 'resolve', view.record.mapping.id])));
+        const located = await Promise.all(state.mappings!.map(({ view }) => call<LocatedMapping>(selected.root, ['map', 'resolve', view.record.mapping.id])));
         result = located.flatMap(({ view, projections }) => [
           ...this.entries(selected, view.record.mapping.anchors, projections, view.record.mapping.context, view.record.mapping.id),
           ...(view.record.mapping.scopes || []).map(scope => ({ label: scope.glob, description: 'Code scope', detail: [scope.repository, view.record.mapping.context].filter(Boolean).join('\n') }))
         ]);
       } else {
-        const args = ['show', selected.source.id]; if (selected.source.revision) args.push('--revision', selected.source.revision);
-        const view = await call<View>(selected.root, args);
+        const view = state.view!;
         const projections = selected.source.revision ? [] : (await call<{ projections: Projection[] }>(selected.root, ['resolve', selected.source.id])).projections;
         result = this.entries(selected, view.document.anchors, projections, '', undefined, !!selected.source.revision);
       }
-      if (this.selected !== selected) return this.getChildren();
+      if (generation !== this.generation) return this.getChildren();
       return result.length ? result : [{ label: 'No connected code' }];
     } catch (error) {
-      if (this.selected !== selected) return this.getChildren();
+      if (generation !== this.generation) return this.getChildren();
       return [{ label: error instanceof LoreError && error.kind === 'not_initialized' ? 'Initialize Lore workspace to see connected code' : 'Code connections unavailable', detail: (error as Error).message }];
     }
   }
@@ -79,5 +113,5 @@ export class Mappings implements vscode.TreeDataProvider<MappingEntry>, vscode.D
     if (document.isDirty) throw new Error('Save this code file before navigating to a recorded line range.');
     await vscode.window.showTextDocument(document, { viewColumn: vscode.ViewColumn.One, selection: new vscode.Range(location.start - 1, 0, location.end - 1, 0) });
   }
-  dispose(): void { this.event.dispose(); }
+  dispose(): void { this.generation++; this.event.dispose(); this.summaryEvent.dispose(); }
 }

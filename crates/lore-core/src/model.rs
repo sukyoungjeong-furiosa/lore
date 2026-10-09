@@ -110,10 +110,10 @@ pub enum Actor {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Curation {
-    pub by: String,
-    pub content_digest: String,
-    pub at_ms: u64,
+struct LegacyCuration {
+    by: String,
+    content_digest: String,
+    at_ms: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -143,9 +143,21 @@ pub struct Document {
     pub title: String,
     pub content_format: String,
     pub content: String,
-    pub tags: Vec<String>,
+    // Preserves the serialization of stored revisions; public document views omit legacy tags.
+    #[serde(default, rename = "tags", skip_serializing_if = "Option::is_none")]
+    legacy_tags: Option<Vec<String>>,
+    /// Slash-separated folder path within the owning backend; empty means the root.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub directory: String,
     pub authorship: Vec<Actor>,
-    pub curation: Option<Curation>,
+    // Preserves the bytes of historical revisions, including an explicit null field.
+    #[serde(
+        default,
+        rename = "curation",
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "read_legacy_curation"
+    )]
+    legacy_curation: Option<Option<LegacyCuration>>,
     pub archived: bool,
     pub anchors: Vec<Anchor>,
 }
@@ -157,27 +169,15 @@ impl Document {
             title,
             content_format: "markdown".into(),
             content,
-            tags: vec![],
+            legacy_tags: None,
+            directory: String::new(),
             authorship: vec![actor],
-            curation: None,
+            legacy_curation: None,
             archived: false,
             anchors: vec![],
         };
         value.validate()?;
         Ok(value)
-    }
-
-    pub fn content_digest(&self) -> String {
-        hash(
-            serde_json::to_vec(&(&self.content_format, &self.content))
-                .expect("String serialization"),
-        )
-    }
-
-    pub fn curated(&self) -> bool {
-        self.curation
-            .as_ref()
-            .is_some_and(|c| c.content_digest == self.content_digest())
     }
 
     pub fn validate(&self) -> Result<()> {
@@ -187,8 +187,11 @@ impl Document {
         if self.content_format.trim().is_empty() {
             return Err(Error::invalid("Content format must not be empty"));
         }
-        if self.tags.iter().any(|t| t.trim().is_empty()) {
-            return Err(Error::invalid("Tags must not be empty"));
+        if !self.directory.is_empty() {
+            validate_relative_path(&self.directory)?;
+            if self.directory.split('/').any(|part| part.trim().is_empty()) {
+                return Err(Error::invalid("Directory names must not be blank"));
+            }
         }
         for anchor in &self.anchors {
             validate_relative_path(&anchor.path)?;
@@ -210,6 +213,17 @@ impl Document {
             self.authorship.push(actor);
         }
     }
+
+    pub fn retire_legacy_metadata(&mut self) {
+        self.legacy_tags = None;
+        self.legacy_curation = None;
+    }
+}
+
+fn read_legacy_curation<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Option<Option<LegacyCuration>>, D::Error> {
+    Ok(Some(Option::<LegacyCuration>::deserialize(deserializer)?))
 }
 
 pub fn validate_relative_path(path: &str) -> Result<()> {
@@ -244,17 +258,35 @@ impl Revision {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DocumentView {
     pub revision: RevisionId,
+    #[serde(serialize_with = "serialize_document_view")]
     pub document: Document,
-    pub curated: bool,
+    /// Modification time of this revision, in milliseconds since the Unix epoch.
+    pub last_modified_ms: u64,
+}
+
+fn serialize_document_view<S: serde::Serializer>(
+    document: &Document,
+    serializer: S,
+) -> std::result::Result<S::Ok, S::Error> {
+    let mut value = serde_json::to_value(document).map_err(serde::ser::Error::custom)?;
+    let fields = value
+        .as_object_mut()
+        .expect("Document serializes as an object");
+    fields.remove("tags");
+    fields.remove("curation");
+    fields.insert(
+        "directory".into(),
+        serde_json::Value::String(document.directory.clone()),
+    );
+    value.serialize(serializer)
 }
 
 impl DocumentView {
-    pub fn new(revision: RevisionId, document: Document) -> Self {
-        let curated = document.curated();
+    pub fn new(revision: RevisionId, value: Revision) -> Self {
         Self {
             revision,
-            document,
-            curated,
+            document: value.document,
+            last_modified_ms: value.at_ms,
         }
     }
 }

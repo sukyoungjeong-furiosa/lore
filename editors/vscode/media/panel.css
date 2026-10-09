@@ -9,7 +9,7 @@ nav { display: flex; gap: 8px; margin: 16px 0; }
 input, select, textarea { background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border, transparent); padding: 6px; border-radius: 3px; }
 #search-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 16px 0; }
 #query { flex: 1; min-width: 150px; }
-#status, #draft-status { color: var(--vscode-descriptionForeground); font-size: .9em; }
+#status, #backend-status, #draft-status { color: var(--vscode-descriptionForeground); font-size: .9em; }
 #edit-title { box-sizing: border-box; display: block; width: 100%; margin: 8px 0; }
 #body { box-sizing: border-box; width: 100%; min-height: 50vh; resize: vertical; font-family: var(--vscode-editor-font-family); line-height: 1.6; tab-size: 4; }
 .wiki { display: inline; padding: 0; color: var(--vscode-textLink-foreground); background: transparent; text-align: inherit; }
@@ -23,8 +23,6 @@ pre { overflow: auto; padding: 12px; }
 table { border-collapse: collapse; } th, td { border: 1px solid var(--vscode-panel-border); padding: 6px 12px; }
 [hidden] { display: none !important; }
 
-#edit-tags button { margin: 4px 6px 8px 0; }
-#tag-input { margin-bottom: 12px; }
 
 body { padding: 10px; max-width: none; }
 header, nav, #search-form { flex-wrap: wrap; }
@@ -34,3 +32,10 @@ h1 { font-size: 1.4em; overflow-wrap: anywhere; }
 #mapping-context { white-space: pre-wrap; }
 pre, table { max-width: 100%; overflow: auto; }
 button { margin: 2px; }
+
+#references { margin-top: 24px; padding-top: 12px; border-top: 1px solid var(--vscode-panel-border); }
+#references h2 { font-size: 1em; color: var(--vscode-descriptionForeground); }
+#backlinks a { display: block; }
+a { color: var(--vscode-textLink-foreground); }
+a:hover { color: var(--vscode-textLink-activeForeground); }
+#edit-directory { box-sizing: border-box; display: block; width: 100%; margin: 8px 0; }

@@ -14,4 +14,4 @@ markdown.inline.ruler.before('link', 'lore_wiki', (state, silent) => {
   if (!silent) { const token = state.push('lore_wiki', '', 0); token.content = label; token.meta = { target }; }
   state.pos = end + 2; return true;
 });
-markdown.renderer.rules.lore_wiki = (tokens, index) => `<button class="wiki" data-route="${escape(tokens[index].meta.target)}">${escape(tokens[index].content)}</button>`;
+markdown.renderer.rules.lore_wiki = (tokens, index) => `<a href="#" class="wiki" data-route="${escape(tokens[index].meta.target)}">${escape(tokens[index].content)}</a>`;

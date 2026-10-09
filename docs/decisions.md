@@ -1,5 +1,20 @@
 # Design Decisions
 
+## Distribution
+
+- Initial distribution targets team members. The VS Code extension is distributed as a VSIX with explicit installation instructions, without publishing to the public Marketplace.
+- CLI binaries and VSIX packages are provided through GitHub Releases. Access follows the repository's visibility and permissions.
+- VSIX installation and updates are explicit initially. A private VS Code Marketplace is the intended later channel for automatic extension updates; its account requirements and Remote SSH installation flow must be verified before rollout.
+- The release packaging target is a platform-specific VSIX containing a compatible Lore CLI. Standalone CLI installations remain separately managed.
+- The optional Codex adapter and replaceable example skills are distributed through a Git-backed plugin marketplace. Plugin refresh and activation behavior must be verified with the supported host; unattended updates are not assumed.
+- Updates preserve backend credentials, cached knowledge, and workspace state. These user data are stored outside release packages.
+
+Release automation, CLI bundling, and the Git-backed plugin package are planned. Current development installs use a separately installed CLI and manually configured hooks.
+
+## Connection Names
+
+A connection has a stable identity used in document references and a separately configurable display name. Changing the display name does not change references, credentials, caches, or mappings.
+
 ## Connection Credentials
 
 - Backend credentials are shared within one Lore home across CLI, editors, hooks, and worktrees. They are separate from document caches and synchronization state.
@@ -9,13 +24,24 @@
 
 The local implementation uses plaintext files under `LORE_HOME/credentials`, with owner-only directory and file permissions on Unix. It does not use the OS keychain. VS Code migrates its previous SecretStorage tokens after a successful shared save, preserving any existing shared credential.
 
+## Document Discovery
+
+- Pages are readable without enabling discovery, including configured entry pages.
+- Child discovery is enabled explicitly for individual pages in Lore's backend configuration. It lists directly contained documents; discovery is not inherited by those documents.
+- Links in document content support reading and navigation, not discovery traversal. A linked page can be enabled separately.
+- Refresh updates entry-page titles and the enabled discovery lists. Ordinary child pages are listed by title and identity without retrieving their body or detailed metadata. Containers within the selected page and directly contained databases may require additional requests.
+- Disabling discovery changes the active index scope without deleting cached bodies or code mappings. An index for different discovery settings is not presented as current.
+
 ## Document Cache and Fetch
 
 Cached documents are observations of backend-owned content, not Lore-owned revisions.
 
-- Reading uses a cached observation when available and retrieves missing content on demand. Cache age and incomplete content remain visible.
-- Fetch explicitly refreshes a document's body, or the tree and title index under a backend's configured roots. Fetching the tree does not download every body; bulk body retrieval is a separate choice.
+- Reading uses a cached observation when available and retrieves missing content on demand. The document reader displays source modification time rather than retrieval time; incomplete content remains visible.
+- Backend metadata preserves source modification time, page creator, and last editor when available. Creator and last editor are distinct from a complete authorship history. Missing names preserve source user IDs without preventing document access.
+- Fetch explicitly refreshes a document's body, or the title index within its explicitly configured discovery scope. Fetching the tree does not download every body; bulk body retrieval is a separate choice.
 - Failed refreshes remain distinguishable from success and do not discard the previous cached content. Batch retrieval reports failures per document.
+- A metadata fetch with a maximum cache age may reuse a recent partial index, preserving its warnings and completeness status. Explicit refresh still requests a new observation. Concurrent refreshes waiting for the same backend share a newly completed result.
+- Cancelled traversal preserves the last completed title index; per-page observations already cached may remain.
 - Cache-only access performs no backend requests. Missing content is distinguishable from an empty document or discovery result.
 - Document retrieval does not modify mappings, local document edits, or synchronization baselines.
 

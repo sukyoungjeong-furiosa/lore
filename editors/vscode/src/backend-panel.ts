@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { DocumentSurface } from './document-surface';
 import MarkdownIt from 'markdown-it';
-import { call, DocumentContent, DocumentReference, Retrieved } from './client';
+import { call, BackendConfiguration, DocumentContent, DocumentReference, Retrieved } from './client';
 import { escape } from './markdown';
 
 const reader = new MarkdownIt({ html: false, linkify: true });
@@ -11,6 +11,8 @@ export class BackendPanel implements vscode.Disposable {
   private disposed = false;
   private sequence = 0;
   private current?: DocumentReference;
+  private childDiscovery = false;
+  private sourceName = '';
   private content?: Retrieved<DocumentContent>;
   constructor(private readonly root: string, private readonly surface: DocumentSurface, private readonly cached: () => boolean,
     private readonly changed: () => void) {}
@@ -20,18 +22,24 @@ export class BackendPanel implements vscode.Disposable {
     const sequence = ++this.sequence;
     try {
       const args = ['docs', 'show', reference.backend, reference.id]; if (this.cached()) args.push('--cached');
-      const content = await call<Retrieved<DocumentContent>>(this.root, args);
+      const [content, configs] = await Promise.all([call<Retrieved<DocumentContent>>(this.root, args),
+        call<Record<string, BackendConfiguration>>(this.root, ['backend', 'list'])]);
       if (sequence !== this.sequence || this.disposed || !this.surface.active(this)) return;
       reference = content.value.document.reference;
       this.current = content.value.document.reference; this.content = content;
+      this.sourceName = configs[reference.backend]?.display_name || reference.backend;
+      this.childDiscovery = !!configs[reference.backend]?.discovery_pages?.includes(reference.id);
       this.render();
     } catch (error) { if (sequence === this.sequence) this.surface.fail(this, (error as Error).message); throw error; }
   }
   private render(): void {
     if (!this.content) return;
-    const { value, cached, fetched_at_ms } = this.content;
-    this.surface.post(this, { type: 'backendDocument', root: this.root, title: value.document.title, reference: value.document.reference,
-      status: `${cached ? 'Cached' : 'Fetched'} · ${new Date(fetched_at_ms).toLocaleString()} · ${value.document.reference.backend}`,
+    const { value } = this.content;
+    const document = value.document;
+    const modified = document.last_modified ? new Date(document.last_modified).toLocaleString() : 'Unknown';
+    const user = (value: typeof document.created_by) => value ? value.name || value.id : 'Unknown';
+    this.surface.post(this, { type: 'backendDocument', childDiscovery: this.childDiscovery, root: this.root, title: value.document.title, reference: value.document.reference,
+      status: `Last modified: ${modified} · Created by: ${user(document.created_by)} · Last edited by: ${user(document.last_edited_by)} · ${this.sourceName}`,
       warnings: [...(value.partial ? ['Partial content. Open the original in Notion for the full document.'] : []), ...value.warnings],
       html: reader.render(value.content) }, `Document · ${value.document.title}`);
   }
