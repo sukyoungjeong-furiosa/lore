@@ -27,14 +27,19 @@ npm run package -- --out lore.vsix
 code --install-extension lore.vsix --force
 ```
 
-For Remote SSH, install the VSIX from the connected window and install the CLI on the remote host. See the [extension guide](editors/vscode/README.md) for backend setup. Updates currently require reinstalling the VSIX; a private Marketplace is planned.
+For Remote SSH, install the VSIX from the connected window and install the CLI on the remote host. Updates currently require reinstalling the VSIX; a private Marketplace is planned.
 
 ### Codex
 
-Optional hooks and a replaceable example skill are available through the [agent setup guide](docs/development/agent-context.md#optional-codex-hook). They currently require manual setup.
+Optional hooks and a replaceable example skill require [manual setup](integrations/codex/README.md).
+
+## Connect Notion
+
+In VS Code, run **Lore: Initialize Workspace**, then **Lore: Connect Notion**. Supply a page URL and a token authorized to read it. CLI and hooks share the saved connection on the same machine.
+
+For CLI setup and operations, use `lore --help` and `lore backend --help`.
 
 ## Documentation
 
 - [Architecture](docs/architecture/)
-- [Design decisions](docs/decisions.md)
-- [Notion MVP](docs/development/notion-mvp.md)
+- [Experience](docs/experience.md)
