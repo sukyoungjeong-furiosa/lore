@@ -2,5 +2,4 @@
 
 Lore links code to documentation for humans and AI agents.
 
-- [Architecture](docs/architecture/overview.md)
-- [Specifications](docs/specs/)
+- [Architecture](docs/architecture/)
