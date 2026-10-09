@@ -1,12 +1,17 @@
 use clap::Subcommand;
 use lore_core::{DocumentReference, Error, ErrorKind, Result};
-use lore_local::{BackendConfig, BackendRegistry};
+use lore_local::{BackendConfig, BackendRegistry, CredentialStore};
 use lore_notion::{NotionBackend, page_id};
 use serde_json::{Value, json};
-use std::path::Path;
+use std::{io::Read, path::Path};
 
 #[derive(Subcommand)]
 pub enum BackendOperation {
+    /// Manage shared connection credentials for CLI, editor, and hook access.
+    Auth {
+        #[command(subcommand)]
+        operation: AuthOperation,
+    },
     AddNotion {
         name: String,
         #[arg(long, required = true)]
@@ -17,6 +22,23 @@ pub enum BackendOperation {
         api_url: String,
     },
     List,
+    Remove {
+        name: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum AuthOperation {
+    /// Save a token supplied through stdin; the token is never included in command arguments.
+    Set {
+        name: String,
+        #[arg(long, required = true)]
+        stdin: bool,
+    },
+    /// Report credential availability without returning token values.
+    Status {
+        name: String,
+    },
     Remove {
         name: String,
     },
@@ -61,6 +83,9 @@ pub enum DocsOperation {
         page: Option<String>,
         #[arg(long, conflicts_with = "page")]
         with_content: bool,
+        /// Reuse a sufficiently recent title index; applies only to metadata fetch.
+        #[arg(long, conflicts_with_all = ["page", "with_content"])]
+        max_age_seconds: Option<u64>,
     },
     /// Search cached titles within the configured roots. Run docs index first.
     Search {
@@ -73,9 +98,46 @@ pub enum DocsOperation {
 pub fn configure(home: &Path, command: &BackendOperation) -> Result<Value> {
     let registry = BackendRegistry::new(home);
     match command {
+        BackendOperation::Auth { operation } => {
+            let store = CredentialStore::new(home);
+            match operation {
+                AuthOperation::Set { name, .. } => {
+                    let config = registry.get(name)?;
+                    let mut token = String::new();
+                    std::io::stdin()
+                        .take(16 * 1024 + 1)
+                        .read_to_string(&mut token)
+                        .map_err(|_| {
+                            Error::invalid("Could not read connection token from stdin")
+                        })?;
+                    if token.len() > 16 * 1024 {
+                        return Err(Error::invalid("Connection token input exceeds 16 KiB"));
+                    }
+                    store.set(name, &config, &token)?;
+                    Ok(json!({"backend": name, "stored": true}))
+                }
+                AuthOperation::Status { name } => {
+                    let config = registry.get(name)?;
+                    let BackendConfig::Notion { token_env, .. } = &config;
+                    let environment =
+                        std::env::var(token_env).is_ok_and(|token| !token.trim().is_empty());
+                    let stored = store.get(name, &config)?.is_some();
+                    Ok(
+                        json!({"backend": name, "stored": stored, "environment": environment,
+                        "source": if environment { "environment" } else if stored { "stored" } else { "none" }}),
+                    )
+                }
+                AuthOperation::Remove { name } => {
+                    registry.get(name)?;
+                    store.remove(name)?;
+                    Ok(json!({"backend": name, "stored": false}))
+                }
+            }
+        }
         BackendOperation::List => Ok(serde_json::to_value(registry.list()?)?),
         BackendOperation::Remove { name } => {
             registry.remove(name)?;
+            CredentialStore::new(home).remove(name)?;
             Ok(json!({"removed":name,"mappings_preserved":true}))
         }
         BackendOperation::AddNotion {
@@ -112,17 +174,19 @@ pub fn configure(home: &Path, command: &BackendOperation) -> Result<Value> {
 }
 
 fn configured(
-    registry: &BackendRegistry,
+    home: &Path,
     name: &str,
     cached: bool,
 ) -> Result<(Vec<DocumentReference>, Option<NotionBackend>)> {
+    let config = BackendRegistry::new(home).get(name)?;
     let BackendConfig::Notion {
         roots,
         token_env,
         api_url,
-    } = registry.get(name)?;
+    } = &config;
     let roots = roots
-        .into_iter()
+        .iter()
+        .cloned()
         .map(|id| DocumentReference {
             backend: name.into(),
             id,
@@ -131,13 +195,14 @@ fn configured(
     let backend = if cached {
         None
     } else {
-        let token = std::env::var(&token_env).map_err(|_| {
-            Error::new(
-                ErrorKind::PermissionDenied,
-                format!("Set {token_env} for this Notion connection"),
-            )
-        })?;
-        Some(NotionBackend::new(name.into(), token, &api_url)?)
+        let token = match std::env::var(token_env) {
+            Ok(token) if !token.trim().is_empty() => token,
+            _ => CredentialStore::new(home).get(name, &config)?.ok_or_else(|| {
+                Error::new(ErrorKind::PermissionDenied,
+                    format!("Set a shared token with `lore backend auth set {name} --stdin`, or set {token_env}"))
+            })?,
+        };
+        Some(NotionBackend::new(name.into(), token, api_url)?)
     };
     Ok((roots, backend))
 }
@@ -176,9 +241,9 @@ pub fn documents(home: &Path, command: &DocsOperation) -> Result<Value> {
         | DocsOperation::Fetch { backend, .. }
         | DocsOperation::Search { backend, .. } => backend,
     };
-    let (roots, _) = configured(&registry, name, true)?;
+    let (roots, _) = configured(home, name, true)?;
     let cache = registry.cache(name);
-    let backend = || configured(&registry, name, false).map(|(_, backend)| backend.unwrap());
+    let backend = || configured(home, name, false).map(|(_, backend)| backend.unwrap());
     match command {
         DocsOperation::Describe {
             page,
@@ -235,17 +300,20 @@ pub fn documents(home: &Path, command: &DocsOperation) -> Result<Value> {
             Ok(serde_json::to_value(cache.search(query, &roots)?)?)
         }
         DocsOperation::Fetch {
-            page, with_content, ..
+            page,
+            with_content,
+            max_age_seconds,
+            ..
         } => {
-            let backend = backend()?;
             if let Some(page) = page {
                 let reference = reference(home, name, page)?;
-                let content = cache.read(Some(&backend), &reference)?;
+                let content = cache.read(Some(&backend()?), &reference)?;
                 Ok(serde_json::to_value(content)?)
             } else {
-                let index = cache.index(&backend, &roots)?;
+                let index = cache.fetch_index(&roots, *max_age_seconds, backend)?;
                 let mut results = vec![];
                 if *with_content {
+                    let backend = configured(home, name, false)?.1.unwrap();
                     for document in &index.value.documents {
                         results.push(match cache.read(Some(&backend), &document.reference) {
                             Ok(content) => json!({

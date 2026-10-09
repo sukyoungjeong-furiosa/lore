@@ -3,6 +3,30 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
+/// A checkout-relative pattern evaluated against current paths without code projection.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PathScope {
+    pub repository: String,
+    pub glob: String,
+}
+
+impl PathScope {
+    pub fn matcher(&self) -> Result<globset::GlobMatcher> {
+        if self.repository.trim().is_empty() || self.glob.len() > 1024 {
+            return Err(Error::invalid(
+                "Code scopes require a repository and a glob of at most 1024 bytes",
+            ));
+        }
+        validate_relative_path(&self.glob)?;
+        globset::GlobBuilder::new(&self.glob)
+            .literal_separator(true)
+            .backslash_escape(false)
+            .build()
+            .map(|glob| glob.compile_matcher())
+            .map_err(|error| Error::invalid(format!("Invalid code scope glob: {error}")))
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct MappingId(String);
@@ -60,13 +84,19 @@ pub struct Mapping {
     pub anchors: Vec<Anchor>,
     pub context: String,
     pub archived: bool,
+    // Empty scopes are omitted so existing immutable revisions retain their hashes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scopes: Vec<PathScope>,
 }
 
 impl Mapping {
     pub fn validate(&self) -> Result<()> {
         self.document.validate()?;
-        if self.anchors.is_empty() {
-            return Err(Error::invalid("Mappings require at least one anchor"));
+        if self.anchors.is_empty() && self.scopes.is_empty() {
+            return Err(Error::invalid("Mappings require an anchor or a code scope"));
+        }
+        for scope in &self.scopes {
+            scope.matcher()?;
         }
         for anchor in &self.anchors {
             validate_relative_path(&anchor.path)?;
@@ -102,7 +132,7 @@ pub struct MappingView {
     pub record: MappingRevision,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AnchorSummary {
     pub id: crate::DocumentId,
     pub path: String,
@@ -111,16 +141,18 @@ pub struct AnchorSummary {
     pub context: crate::CodeContext,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MappingSummary {
     pub id: MappingId,
     pub document: DocumentReference,
     pub anchors: Vec<AnchorSummary>,
     pub context: String,
     pub archived: bool,
+    #[serde(default)]
+    pub scopes: Vec<PathScope>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MappingRevisionSummary {
     pub parent: Option<RevisionId>,
     pub actor: Actor,
@@ -129,7 +161,7 @@ pub struct MappingRevisionSummary {
 }
 
 /// Discovery omits captured source bodies; full revisions remain available through explicit reads.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MappingSummaryView {
     pub revision: RevisionId,
     pub record: MappingRevisionSummary,
@@ -150,6 +182,7 @@ impl From<MappingView> for MappingSummaryView {
                     document: mapping.document,
                     context: mapping.context,
                     archived: mapping.archived,
+                    scopes: mapping.scopes,
                     anchors: mapping
                         .anchors
                         .into_iter()

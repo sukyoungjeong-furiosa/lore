@@ -32,7 +32,7 @@ Links connect documents using conventions supported by their content format and 
 
 ## Mapping
 
-A mapping has a stable identity, a document reference, one or more code anchors, and optional explanatory context.
+A mapping has a stable identity, a document reference, one or more code anchors or path scopes, and optional explanatory context.
 
 - A document can have zero or more mappings. Creating or editing a mapping does not modify its document.
 - Lore preserves mapping revision history. Mapping authorship and any human confirmation remain distinct from document authorship and curation.
@@ -47,3 +47,10 @@ An anchor records a code repository, revision or captured working state, and loc
 - Different anchors may refer to different files, repositories, or code states.
 - Projection preserves the original reference without modifying documents or code.
 - Finding a corresponding location does not establish the validity of the explanation or extend human confirmation to changed code or document content.
+
+## Path Scope
+
+A path scope associates a document with checkout-relative paths in a code repository using a glob pattern.
+
+- Scopes match current paths without claiming a particular code revision or line location.
+- Scopes and anchors may coexist in a mapping. Matching either discovers a relationship; it does not validate the document's explanation.

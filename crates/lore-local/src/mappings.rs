@@ -1,7 +1,7 @@
 use crate::{ActiveDocument, Workspace, atomic_write, now_ms};
 use lore_core::{
     Actor, Anchor, AnchorResolver, DocumentReference, Error, ErrorKind, Mapping, MappingId,
-    MappingRepository, MappingRevision, MappingView, Projection, Result, RevisionId,
+    MappingRepository, MappingRevision, MappingView, PathScope, Projection, Result, RevisionId,
 };
 use serde::Serialize;
 use std::path::PathBuf;
@@ -103,7 +103,8 @@ impl Workspace {
     pub fn create_mapping(
         &self,
         document: DocumentReference,
-        anchor: Anchor,
+        anchors: Vec<Anchor>,
+        scopes: Vec<PathScope>,
         context: String,
         actor: Actor,
     ) -> Result<MappingView> {
@@ -112,7 +113,8 @@ impl Workspace {
         let mapping = Mapping {
             id: MappingId::new(),
             document,
-            anchors: vec![anchor],
+            anchors,
+            scopes,
             context,
             archived: false,
         };
@@ -208,6 +210,9 @@ impl Workspace {
         let mut result = vec![];
         for view in self.list_mappings(include_archived)? {
             let mut relevant = scope.is_none();
+            if let Some(path) = scope {
+                relevant |= self.mapping_scope_matches(&view.record.mapping, path, recursive)?;
+            }
             let mut projections = vec![];
             for anchor in &view.record.mapping.anchors {
                 let projection = resolver.resolve(anchor, &self.code, scope)?;
@@ -226,6 +231,36 @@ impl Workspace {
             }
         }
         Ok(result)
+    }
+
+    pub fn mapping_scope_matches(
+        &self,
+        mapping: &Mapping,
+        path: &str,
+        recursive: bool,
+    ) -> Result<bool> {
+        for scope in &mapping.scopes {
+            if scope.repository != self.code.repository_id {
+                continue;
+            }
+            let matcher = scope.matcher()?;
+            if path.is_empty()
+                || matcher.is_match(path)
+                || recursive && scope.glob.starts_with(&format!("{path}/"))
+            {
+                return Ok(true);
+            }
+            if recursive
+                && self
+                    .code
+                    .files(Some(path))?
+                    .iter()
+                    .any(|file| matcher.is_match(file))
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     pub fn install_mapping(&self, source: &Workspace, id: &MappingId) -> Result<MappingView> {

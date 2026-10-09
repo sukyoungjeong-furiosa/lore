@@ -90,6 +90,26 @@ impl GitRepository {
             snapshot: text,
         })
     }
+
+    pub fn files(&self, scope: Option<&str>) -> Result<Vec<String>> {
+        let mut args = vec![
+            "--literal-pathspecs",
+            "ls-files",
+            "-co",
+            "--exclude-standard",
+            "-z",
+            "--",
+        ];
+        if let Some(scope) = scope.filter(|scope| !scope.is_empty()) {
+            validate_relative_path(scope)?;
+            args.push(scope);
+        }
+        Ok(command(&self.root, &args)?
+            .split('\0')
+            .filter(|path| !path.is_empty())
+            .map(str::to_owned)
+            .collect())
+    }
 }
 
 impl CodeRepository for GitRepository {

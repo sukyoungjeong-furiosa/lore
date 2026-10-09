@@ -1,15 +1,19 @@
 mod backend;
+mod catalog;
 mod mapping;
 mod model;
 mod projection;
 mod repository;
+mod routing;
 mod wiki;
 
 pub use backend::*;
+pub use catalog::*;
 pub use mapping::*;
 pub use model::*;
 pub use projection::*;
 pub use repository::*;
+pub use routing::*;
 pub use wiki::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]

@@ -30,6 +30,12 @@ pub struct WorkspaceState {
     pub mappings: BTreeMap<lore_core::MappingId, ActiveDocument>,
 }
 
+#[derive(Serialize, Deserialize)]
+struct CheckoutDefaults {
+    repository_id: String,
+    store: PathBuf,
+}
+
 pub struct Workspace {
     pub state_path: PathBuf,
     pub code: GitRepository,
@@ -79,22 +85,55 @@ impl Workspace {
     ) -> Result<Self> {
         let mut code = GitRepository::discover(checkout, identity.clone())?;
         let home = absolute(home)?;
+        if home.starts_with(&code.root) || home.starts_with(&code.common_directory) {
+            return Err(Error::invalid(
+                "Lore data must be stored outside the code checkout and Git directory",
+            ));
+        }
+        let defaults_directory = home
+            .join("checkout-defaults")
+            .join(hash(code.common_directory.to_string_lossy().as_bytes()));
+        std::fs::create_dir_all(&defaults_directory)?;
+        let defaults_lock = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(defaults_directory.join("defaults.lock"))?;
+        defaults_lock.lock()?;
+        let defaults_path = defaults_directory.join("settings.json");
+        let defaults: Option<CheckoutDefaults> = if defaults_path.exists() {
+            Some(serde_json::from_slice(&std::fs::read(&defaults_path)?)?)
+        } else {
+            None
+        };
         let existing_path = Self::state_path(&home, &code.root);
         let existing: Option<WorkspaceState> = if existing_path.exists() {
             Some(serde_json::from_slice(&std::fs::read(&existing_path)?)?)
         } else {
             None
         };
-        if identity.is_none()
-            && let Some(state) = &existing
-        {
-            code.repository_id = state.repository_id.clone();
+        if identity.is_none() {
+            if let Some(state) = &existing {
+                code.repository_id = state.repository_id.clone();
+            } else if let Some(defaults) = &defaults {
+                code.repository_id = defaults.repository_id.clone();
+            }
+        }
+        if code.repository_id.trim().is_empty() {
+            return Err(Error::invalid("Repository identity must not be empty"));
         }
         let directory = match store {
             Some(path) => absolute(path)?,
             None => existing
                 .as_ref()
                 .map(|s| s.store.clone())
+                .or_else(|| {
+                    defaults
+                        .as_ref()
+                        .filter(|defaults| defaults.repository_id == code.repository_id)
+                        .map(|defaults| defaults.store.clone())
+                })
                 .unwrap_or_else(|| home.join("repositories").join(hash(&code.repository_id))),
         };
         if home.starts_with(&code.root)
@@ -127,14 +166,23 @@ impl Workspace {
             let state = WorkspaceState {
                 schema_version: 1,
                 checkout: code.root.clone(),
-                repository_id: code.repository_id,
+                repository_id: code.repository_id.clone(),
                 store: directory,
                 documents: BTreeMap::new(),
                 mappings: BTreeMap::new(),
             };
             atomic_write(&state_path, &serde_json::to_vec_pretty(&state)?)?;
         }
-        Self::open(&home, checkout)
+        let state: WorkspaceState = serde_json::from_slice(&std::fs::read(&state_path)?)?;
+        let settings = CheckoutDefaults {
+            repository_id: state.repository_id.clone(),
+            store: state.store.clone(),
+        };
+        let workspace = Self::from_state(state_path, code, state)?;
+        if defaults.is_none() {
+            atomic_write(&defaults_path, &serde_json::to_vec(&settings)?)?;
+        }
+        Ok(workspace)
     }
 
     pub fn open(home: &Path, checkout: &Path) -> Result<Self> {
@@ -151,13 +199,24 @@ impl Workspace {
             }
         })?;
         let state: WorkspaceState = serde_json::from_slice(&bytes)?;
-        if state.schema_version != 1 || state.checkout != discovered.root {
+        Self::from_state(state_path, discovered, state)
+    }
+
+    fn from_state(
+        state_path: PathBuf,
+        mut code: GitRepository,
+        state: WorkspaceState,
+    ) -> Result<Self> {
+        if state.schema_version != 1 || state.checkout != code.root {
             return Err(Error::new(
                 ErrorKind::Unsupported,
                 "Workspace schema or checkout does not match",
             ));
         }
-        let code = GitRepository::discover(checkout, Some(state.repository_id.clone()))?;
+        if state.repository_id.trim().is_empty() {
+            return Err(Error::invalid("Repository identity must not be empty"));
+        }
+        code.repository_id = state.repository_id;
         Ok(Self {
             state_path,
             code,

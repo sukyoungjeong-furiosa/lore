@@ -289,6 +289,31 @@ impl BackendCache {
         )
     }
 
+    /// Refreshes shared title metadata, rechecking freshness under a backend-wide lock.
+    pub fn fetch_index<B: KnowledgeBackend>(
+        &self,
+        roots: &[DocumentReference],
+        max_age_seconds: Option<u64>,
+        backend: impl FnOnce() -> Result<B>,
+    ) -> Result<Retrieved<DocumentIndex>> {
+        std::fs::create_dir_all(&self.directory)?;
+        let lock = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(self.directory.join("index.lock"))?;
+        lock.lock()?;
+        if let Some(age) = max_age_seconds
+            && let Ok(index) = self.search("", roots)
+            && index.value.complete
+            && now_ms().saturating_sub(index.fetched_at_ms) < age.saturating_mul(1000)
+        {
+            return Ok(index);
+        }
+        self.index(&backend()?, roots)
+    }
+
     pub fn search(
         &self,
         query: &str,

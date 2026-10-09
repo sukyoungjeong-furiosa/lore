@@ -7,6 +7,7 @@ use lore_local::{SearchOptions, Workspace, home, now_ms};
 use serde_json::{Value, json};
 use std::{io::Read, path::PathBuf};
 mod backend_commands;
+mod context_commands;
 mod mapping_commands;
 
 #[derive(Parser)]
@@ -41,7 +42,12 @@ impl From<Author> for Actor {
 
 #[derive(Subcommand)]
 enum Operation {
-    /// Configure external knowledge backends. Credentials remain in environment variables.
+    /// Discover related Lore without reading document bodies.
+    Context {
+        #[command(subcommand)]
+        command: context_commands::ContextOperation,
+    },
+    /// Configure external knowledge backends and shared connection credentials.
     Backend {
         #[command(subcommand)]
         command: backend_commands::BackendOperation,
@@ -211,6 +217,9 @@ fn execute(cli: &Cli) -> Result<Value> {
     let workspace = Workspace::open(&data_home, &cli.repo)?;
     let actor: Actor = cli.author.into();
     match &cli.command {
+        Operation::Context { command } => {
+            context_commands::execute(&workspace, &data_home, command)
+        }
         Operation::Backend { .. } | Operation::Docs { .. } => unreachable!(),
         Operation::Map { command } => {
             mapping_commands::execute(&workspace, &data_home, actor, command)
@@ -469,6 +478,7 @@ fn execute(cli: &Cli) -> Result<Value> {
 
 fn print_human(value: &Value, command: &Operation) {
     match command {
+        Operation::Context { .. } => context_commands::print(value),
         Operation::Docs { command } => backend_commands::print(value, command),
         Operation::Map { command } => mapping_commands::print(value, command),
         Operation::Show { raw, .. } => {

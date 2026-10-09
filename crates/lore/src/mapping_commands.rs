@@ -1,15 +1,38 @@
 use clap::Subcommand;
-use lore_core::{Actor, AnchorResolver, Error, MappingId, Result, RevisionId, TextResolver};
-use lore_local::{LocatedMapping, Workspace};
+use lore_core::{
+    Actor, AnchorResolver, Error, MappingId, PathScope, Result, RevisionId, TextResolver,
+};
+use lore_local::{CatalogStore, LocatedMapping, MappingSource, Workspace};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
 #[derive(Subcommand)]
 pub enum MapOperation {
+    /// Configure a repository's shared discovery source across worktrees.
+    Source {
+        #[command(subcommand)]
+        command: MappingSourceOperation,
+    },
+    /// Fetch discovery metadata without activating mappings or changing local baselines.
+    Fetch {
+        #[arg(long)]
+        max_age_seconds: Option<u64>,
+    },
+    /// Publish one mapping to the local shared catalog; backend content is unchanged.
+    Publish {
+        id: MappingId,
+        #[arg(long)]
+        if_match: RevisionId,
+        #[arg(long)]
+        if_shared: Option<RevisionId>,
+    },
     Create {
         backend: String,
         document: String,
-        location: String,
+        #[arg(required_unless_present = "glob")]
+        location: Option<String>,
+        #[arg(long)]
+        glob: Vec<String>,
         #[arg(long, default_value = "")]
         context: String,
     },
@@ -38,7 +61,10 @@ pub enum MapOperation {
     },
     Attach {
         id: MappingId,
-        location: String,
+        #[arg(required_unless_present = "glob")]
+        location: Option<String>,
+        #[arg(long)]
+        glob: Vec<String>,
         #[arg(long)]
         if_match: RevisionId,
     },
@@ -66,6 +92,17 @@ pub enum MapOperation {
     },
 }
 
+#[derive(Subcommand)]
+pub enum MappingSourceOperation {
+    Set {
+        url: String,
+        #[arg(long)]
+        token_env: Option<String>,
+    },
+    Show,
+    Remove,
+}
+
 fn capture(workspace: &Workspace, location: &str) -> Result<lore_core::Anchor> {
     let (path, range) = location
         .rsplit_once(':')
@@ -81,8 +118,21 @@ fn capture(workspace: &Workspace, location: &str) -> Result<lore_core::Anchor> {
     workspace.code.capture(&path, start, end)
 }
 
+fn scopes(workspace: &Workspace, patterns: &[String]) -> Vec<PathScope> {
+    patterns
+        .iter()
+        .map(|glob| PathScope {
+            repository: workspace.code.repository_id.clone(),
+            glob: glob.clone(),
+        })
+        .collect()
+}
+
 pub fn print(value: &Value, command: &MapOperation) {
     match command {
+        MapOperation::Source { .. } | MapOperation::Fetch { .. } => {
+            println!("{}", serde_json::to_string_pretty(value).unwrap());
+        }
         MapOperation::Ls { .. } => {
             for item in value["mappings"].as_array().unwrap() {
                 print_view(&item["view"]);
@@ -135,6 +185,11 @@ fn print_view(view: &Value) {
             anchor["end"]
         );
     }
+    if let Some(scopes) = mapping["scopes"].as_array() {
+        for scope in scopes {
+            println!("  Scope: {}", scope["glob"].as_str().unwrap());
+        }
+    }
 }
 
 pub fn execute(
@@ -144,19 +199,58 @@ pub fn execute(
     command: &MapOperation,
 ) -> Result<Value> {
     match command {
+        MapOperation::Source { command } => {
+            let store = CatalogStore::new(home, &workspace.code.repository_id);
+            match command {
+                MappingSourceOperation::Set { url, token_env } => {
+                    store.configure(Some(&MappingSource {
+                        url: url.clone(),
+                        token_env: token_env.clone(),
+                    }))?;
+                    Ok(json!({"source":store.source()?}))
+                }
+                MappingSourceOperation::Show => Ok(json!({"source":store.source()?})),
+                MappingSourceOperation::Remove => {
+                    store.configure(None)?;
+                    Ok(json!({"source":null}))
+                }
+            }
+        }
+        MapOperation::Fetch { max_age_seconds } => Ok(serde_json::to_value(
+            CatalogStore::new(home, &workspace.code.repository_id).fetch(*max_age_seconds)?,
+        )?),
+        MapOperation::Publish {
+            id,
+            if_match,
+            if_shared,
+        } => Ok(serde_json::to_value(workspace.publish_mapping(
+            home,
+            id,
+            if_match,
+            if_shared.as_ref(),
+        )?)?),
         MapOperation::Create {
             backend,
             document,
             location,
+            glob,
             context,
         } => {
             let reference = super::backend_commands::reference(home, backend, document)?;
-            Ok(serde_json::to_value(workspace.create_mapping(
-                reference,
-                capture(workspace, location)?,
-                context.clone(),
-                actor,
-            )?)?)
+            Ok(serde_json::to_value(
+                workspace.create_mapping(
+                    reference,
+                    location
+                        .as_deref()
+                        .map(|location| capture(workspace, location))
+                        .transpose()?
+                        .into_iter()
+                        .collect(),
+                    scopes(workspace, glob),
+                    context.clone(),
+                    actor,
+                )?,
+            )?)
         }
         MapOperation::Ls {
             path,
@@ -210,15 +304,21 @@ pub fn execute(
         MapOperation::Attach {
             id,
             location,
+            glob,
             if_match,
         } => {
-            let anchor = capture(workspace, location)?;
+            let anchor = location
+                .as_deref()
+                .map(|location| capture(workspace, location))
+                .transpose()?;
+            let scopes = scopes(workspace, glob);
             Ok(serde_json::to_value(workspace.update_mapping(
                 id,
                 if_match,
                 actor,
                 |mapping| {
-                    mapping.anchors.push(anchor);
+                    mapping.anchors.extend(anchor);
+                    mapping.scopes.extend(scopes);
                     Ok(())
                 },
             )?)?)
@@ -259,7 +359,8 @@ pub fn execute(
             };
             let mut results = vec![];
             for view in selected {
-                let mut relevant = false;
+                let mut relevant =
+                    workspace.mapping_scope_matches(&view.record.mapping, &requested, recursive)?;
                 for anchor in &view.record.mapping.anchors {
                     let projection =
                         TextResolver.resolve(anchor, &workspace.code, Some(&requested))?;

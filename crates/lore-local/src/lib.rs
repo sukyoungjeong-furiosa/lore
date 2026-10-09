@@ -1,12 +1,18 @@
 mod backends;
+mod catalog;
+mod credentials;
 mod git;
 mod mappings;
+mod routing;
 mod store;
 mod workspace;
 
 pub use backends::*;
+pub use catalog::*;
+pub use credentials::CredentialStore;
 pub use git::GitRepository;
 pub use mappings::*;
+pub use routing::*;
 pub use store::FileRepository;
 pub use workspace::*;
 

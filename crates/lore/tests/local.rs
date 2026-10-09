@@ -440,3 +440,53 @@ fn malformed_cli_input_is_machine_readable_when_requested() {
     let error: Value = serde_json::from_slice(&output.stderr).unwrap();
     assert_eq!(error["error"]["kind"], "invalid_input");
 }
+
+#[test]
+fn fresh_worktrees_inherit_registered_identity_and_storage_but_start_with_empty_changes() {
+    let s = Setup::new();
+    let primary = s.temp.path().join("registered");
+    std::fs::create_dir(&primary).unwrap();
+    let git = |args: &[&str]| {
+        assert!(
+            Command::new("git")
+                .arg("-C")
+                .arg(&primary)
+                .args(args)
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+    };
+    git(&["init", "-q"]);
+    git(&["config", "user.email", "test@example.invalid"]);
+    git(&["config", "user.name", "test"]);
+    git(&["commit", "--allow-empty", "-qm", "seed"]);
+    let store = s.temp.path().join("registered-store");
+    let configured = parse(s.run_at(
+        &primary,
+        &[
+            "init",
+            "--repository-id",
+            "project:registered",
+            "--store",
+            store.to_str().unwrap(),
+        ],
+        None,
+    ));
+    parse(s.run_at(&primary, &["create", "Primary draft"], None));
+    let peer = s.temp.path().join("registered-peer");
+    git(&["worktree", "add", "-qb", "peer", peer.to_str().unwrap()]);
+    let fresh = parse(s.run_at(&peer, &["init"], None));
+    assert_eq!(
+        fresh["workspace"]["repository_id"],
+        configured["workspace"]["repository_id"]
+    );
+    assert_eq!(
+        fresh["workspace"]["store"],
+        configured["workspace"]["store"]
+    );
+    assert_eq!(fresh["workspace"]["documents"], json!({}));
+    assert_eq!(fresh["workspace"]["mappings"], json!({}));
+    assert_eq!(fresh, parse(s.run_at(&peer, &["init"], None)));
+}
