@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { writeFileSync } from 'node:fs';
+import { call, configureSecrets, migrateBackendTokens } from '../src/client';
 import { chromium, Browser } from 'playwright-core';
 import { Webview } from './webview';
 const executable = process.env.LORE_TEST_EXECUTABLE!;
@@ -111,6 +112,7 @@ if (args.includes('edit')) {
     await eventually(async () => (await frame.locator('#archive').textContent()) === 'Restore' ? true : undefined);
     await frame.locator('#archive').click();
     await eventually(async () => !cli(['show', target.document.id]).document.archived ? true : undefined);
+    await eventually(async () => (await frame.locator('#archive').textContent()) === 'Archive' ? true : undefined);
     const old = cli(['links', page.document.id, '--revision', attached.revision]);
     assert.equal(old.outgoing[0].matches[0].id, target.document.id);
     const panel = api.panels.get(root);
@@ -122,16 +124,108 @@ if (args.includes('edit')) {
     const backend = 'team'; const notionRoot = 'b81457a4-a41d-45b4-9ae4-82d0c0e9e00c'; const notionChild = '00000000-0000-4000-8000-000000000001';
     cli(['backend', 'add-notion', backend, '--root', notionRoot, '--token-env', 'LORE_TEST_NOTION_TOKEN', '--api-url', process.env.LORE_TEST_NOTION_URL!]);
     const workbench = browser.contexts()[0].pages()[0];
+    const mockState = async () => (await fetch(new URL('/test/state', process.env.LORE_TEST_NOTION_URL!))).json() as Promise<{ requestCount: number }>;
     const tokenPrompt = vscode.commands.executeCommand('lore.setBackendToken', backend, root);
     const input = workbench.locator('.quick-input-widget input.input').first();
     await input.waitFor({ state: 'visible' }); await input.fill('test-only-token'); await input.press('Enter'); await tokenPrompt;
-    process.env.LORE_TEST_NOTION_TOKEN = 'wrong-env-token';
+    delete process.env.LORE_TEST_NOTION_TOKEN;
+    assert.equal(cli(['backend', 'auth', 'status', backend]).source, 'stored', 'Token entered in the editor is available to independent CLI processes');
+    const legacyBackend = 'legacy';
+    cli(['backend', 'add-notion', legacyBackend, '--root', notionRoot, '--token-env', 'LORE_TEST_NOTION_TOKEN', '--api-url', process.env.LORE_TEST_NOTION_URL!]);
+    const legacySecrets = new Map<string, string>([[`lore.backend.${legacyBackend}.token`, 'test-only-token']]);
+    configureSecrets({
+      get: async (key: string) => legacySecrets.get(key),
+      store: async (key: string, value: string) => { legacySecrets.set(key, value); },
+      delete: async (key: string) => { legacySecrets.delete(key); },
+      onDidChange: new vscode.EventEmitter<vscode.SecretStorageChangeEvent>().event,
+    });
+    await migrateBackendTokens(root);
+    assert.equal(legacySecrets.size, 0, 'Legacy editor credentials are removed after successful migration');
+    assert.equal(cli(['backend', 'auth', 'status', legacyBackend]).source, 'stored');
+    assert.equal((await call<any>(root, ['docs', 'show', legacyBackend, notionChild])).cached, false);
+    assert.equal(cli(['docs', 'show', legacyBackend, '00000000-0000-4000-8000-000000000002', '--refresh']).cached, false, 'A separate CLI process fetches an uncached document without an environment token');
+    cli(['backend', 'remove', legacyBackend]);
     const sources = await api.knowledge.getChildren();
     assert(sources.some((source: any) => source.kind === 'backend' && source.entry.backend === backend));
     assert(sources.some((source: any) => source.kind === 'local'));
     const backendRoots = await api.backends.getChildren(); assert.equal(backendRoots[0].backend, backend);
     const roots = await api.backends.getChildren(backendRoots[0]); assert.equal(roots[0].document.title, 'PR');
     const children = await api.backends.getChildren(roots[0]); assert.equal(children[0].document.title, 'Notion Scheduler Design'); assert.equal(children[0].count, 0, 'Unmapped documents must be browsable');
+    const knowledgeBackend = sources.find((source: any) => source.kind === 'backend' && source.entry.backend === backend);
+    const knowledgeRoots = await api.knowledge.getChildren(knowledgeBackend);
+    const knowledgePages = await api.knowledge.getChildren(knowledgeRoots[0]);
+    await api.knowledge.getChildren(knowledgePages[0]);
+    cli(['create', 'Filter Unrelated', '--tag', 'design']);
+    cli(['create', 'scheduler.literal', '--tag', 'design', '--tag', 'extra']);
+    cli(['create', 'schedulerXliteral', '--tag', 'design']); api.refresh();
+    await vscode.commands.executeCommand('lore.knowledge.focus');
+    const knowledgeFrame = await eventually(() => Webview.connect(browser!, '#knowledge-tree').catch(() => undefined));
+    assert.equal(await knowledgeFrame.locator('#knowledge-filter').isVisible(), false, 'The filter row is initially hidden within Knowledge');
+    assert(!vscode.extensions.getExtension('lore-local.lore')!.packageJSON.contributes.views.lore.some((view: any) => view.id === 'lore.filter'), 'There is no separate Search view');
+    const beforeFilter = (await mockState()).requestCount;
+    await vscode.commands.executeCommand('lore.search');
+    const filterFrame = knowledgeFrame;
+    const filterInput = filterFrame.locator('#knowledge-query');
+    await eventually(async () => await filterFrame.evaluate<boolean>('document.activeElement?.id === "knowledge-query"') ? true : undefined);
+    assert.equal(await workbench.locator('.quick-input-widget').isVisible(), false, 'Filtering never opens a global input popup');
+    await filterInput.fill('Scheduling Rules');
+    await eventually(async () => await filterFrame.evaluate<number>("[...document.querySelectorAll('#knowledge-tree .label')].filter(e => e.textContent === 'Scheduling Rules').length")
+      && !await filterFrame.evaluate<number>("[...document.querySelectorAll('#knowledge-tree .label')].filter(e => e.textContent === 'Filter Unrelated').length") ? true : undefined);
+    if (process.env.LORE_TEST_SCREENSHOT) await workbench.screenshot({ path: process.env.LORE_TEST_SCREENSHOT });
+    await filterInput.fill('scheduler.literal');
+    await eventually(async () => await filterFrame.evaluate<number>("[...document.querySelectorAll('#knowledge-tree .label')].filter(e => e.textContent === 'scheduler.literal').length")
+      && !await filterFrame.evaluate<number>("[...document.querySelectorAll('#knowledge-tree .label')].filter(e => e.textContent === 'schedulerXliteral').length") ? true : undefined);
+    assert.equal(await filterFrame.evaluate<number>("[...document.querySelectorAll('#knowledge-tree .label')].filter(e => e.textContent === 'scheduler.literal').length"), 1, 'Tagged documents appear once in the filtered list');
+    await filterFrame.locator('#knowledge-regex').click();
+    await eventually(async () => await filterFrame.evaluate<number>("[...document.querySelectorAll('#knowledge-tree .label')].filter(e => e.textContent === 'schedulerXliteral').length") ? true : undefined);
+    await filterInput.fill('^Scheduling Rules$|^Nested Notion Design$');
+    await eventually(async () => await filterFrame.evaluate<number>("[...document.querySelectorAll('#knowledge-tree .label')].filter(e => e.textContent === 'Scheduling Rules').length")
+      && await filterFrame.evaluate<number>("[...document.querySelectorAll('#knowledge-tree .label')].filter(e => e.textContent === 'Nested Notion Design').length")
+      && !await filterFrame.evaluate<number>("[...document.querySelectorAll('#knowledge-tree .label')].filter(e => e.textContent === 'Notion Scheduler Design').length")
+      && !await filterFrame.evaluate<number>("[...document.querySelectorAll('#knowledge-tree .label')].filter(e => e.textContent === 'PR').length") ? true : undefined);
+    await filterInput.fill('[');
+    await eventually(async () => (await filterFrame.locator('#filter-error').textContent())?.includes('Invalid regular expression:') ? true : undefined);
+    assert(await filterFrame.evaluate<number>("[...document.querySelectorAll('#knowledge-tree .label')].filter(e => e.textContent === 'Nested Notion Design').length"), 'Invalid regex retains the last valid results');
+    await filterInput.fill('no-such-knowledge-title');
+    await eventually(async () => !await filterFrame.evaluate<number>("[...document.querySelectorAll('#knowledge-tree .label')].filter(e => e.textContent === 'Scheduling Rules').length")
+      && !await filterFrame.evaluate<number>("[...document.querySelectorAll('#knowledge-tree .label')].filter(e => e.textContent === 'Local Documents').length") ? true : undefined);
+    assert.equal((await mockState()).requestCount, beforeFilter, 'Title filtering does not fetch documents or build a remote index');
+    await filterInput.fill('^Scheduling Rules$');
+    await eventually(async () => await filterFrame.evaluate<number>("[...document.querySelectorAll('#knowledge-tree .label')].filter(e => e.textContent === 'Scheduling Rules').length") ? true : undefined);
+    await vscode.window.showTextDocument(code, vscode.ViewColumn.One);
+    await eventually(async () => await filterFrame.evaluate<number>("[...document.querySelectorAll('#knowledge-tree .label')].filter(e => e.textContent === 'Scheduling Rules').length")
+      && !await filterFrame.evaluate<number>("[...document.querySelectorAll('#knowledge-tree .label')].filter(e => e.textContent === 'Filter Unrelated').length") ? true : undefined);
+    assert.equal(await filterInput.inputValue(), '^Scheduling Rules$', 'Leaving the input preserves the applied query without Enter');
+    await vscode.commands.executeCommand('lore.search');
+    await eventually(async () => !await filterFrame.locator('#knowledge-filter').isVisible() ? true : undefined);
+    assert.equal(api.knowledge.filter, '^Scheduling Rules$', 'Hiding the filter row retains its active query');
+    await vscode.commands.executeCommand('lore.search');
+    await eventually(async () => await filterFrame.locator('#knowledge-filter').isVisible() ? true : undefined);
+    assert.equal(await filterInput.inputValue(), '^Scheduling Rules$', 'Reopening the inline filter keeps the query');
+    await filterFrame.evaluate(`(() => { const input = document.querySelector('#knowledge-query'); for (const value of ['N', 'Nested', '^Nested Notion Design$']) { input.value = value; input.dispatchEvent(new Event('input', { bubbles: true })); } })()`);
+    await eventually(async () => api.knowledge.filter === '^Nested Notion Design$' && await filterInput.inputValue() === '^Nested Notion Design$' ? true : undefined);
+    await filterInput.fill('');
+    await eventually(async () => api.knowledge.filter === '' ? true : undefined);
+    const restoredSources = await api.knowledge.getChildren();
+    const restoredLocal = restoredSources.find((source: any) => source.kind === 'local');
+    const restoredGroups = await api.knowledge.getChildren(restoredLocal);
+    const restoredDesign = restoredGroups.find((entry: any) => entry.entry.label === '#design');
+    assert((await api.knowledge.getChildren(restoredDesign)).some((entry: any) => entry.entry.label === 'Filter Unrelated'), 'Empty input restores nonmatching documents in their original groups');
+    assert.equal(await filterInput.inputValue(), '', 'Clearing is performed directly in the sidebar input');
+    await filterFrame.locator('.row[aria-label="Local Documents"] .twistie').click();
+    await eventually(async () => await filterFrame.locator('.row[aria-label="Scheduling Rules"]').count() ? true : undefined);
+    await filterFrame.locator('.row[aria-label="Scheduling Rules"]').click();
+    await eventually(async () => (await frame.locator('#title').textContent()) === 'Scheduling Rules' ? true : undefined);
+    await filterFrame.evaluate(`(() => { const row = document.querySelector('.row[aria-label="team"]'); row.focus(); row.dispatchEvent(new KeyboardEvent('keydown', {key: 'ArrowRight', bubbles: true})); })()`);
+    await eventually(async () => await filterFrame.locator('.row[aria-label="PR"]').count() ? true : undefined);
+    await filterFrame.locator('.row[aria-label="PR"] .twistie').click();
+    await eventually(async () => await filterFrame.locator('.row[aria-label="Notion Scheduler Design"]').count() ? true : undefined);
+    const sourceId = await filterFrame.evaluate<string>(`document.querySelector('.row[aria-label="team"]').dataset.id`);
+    await vscode.commands.executeCommand('lore.fetchBackend', { loreEntryId: sourceId });
+    assert.equal(cli(['docs', 'search', backend, 'Nested']).value.documents[0].title, 'Nested Notion Design', 'Backend context actions fetch the selected source');
+    await filterFrame.locator('.row[aria-label="Notion Scheduler Design"] .fetch').click();
+    await eventually(async () => cli(['docs', 'show', backend, notionChild, '--cached']).cached ? true : undefined);
+    console.log('Lore VS Code: shared credentials, strict title filtering, regex, invalid patterns, continuous sidebar input, focus persistence, clearing, and cache-only filtering passed');
     const mapping = cli(['map', 'create', backend, notionChild, 'scheduler.py:2-3', '--context', 'Scheduler design context']);
     await vscode.window.showTextDocument(code, vscode.ViewColumn.One);
     const mappedLenses = await vscode.commands.executeCommand<vscode.CodeLens[]>('vscode.executeCodeLensProvider', code.uri);
@@ -151,10 +245,14 @@ if (args.includes('edit')) {
     assert.equal(vscode.window.activeTextEditor?.document.uri.fsPath, path.join(root, 'scheduler.py'));
     assert.equal(vscode.window.activeTextEditor?.selection.start.line, 1);
     assert.equal(await backendFrame.locator('#backend-mode').isVisible(), true, 'Code navigation keeps the document open');
+    const scoped = cli(['map', 'create', backend, notionChild, '--glob', '*.py', '--context', 'Whole Python files']);
+    const scopeEntry = (await api.mappings.getChildren()).find((entry: any) => entry.label === '*.py');
+    assert.equal(scopeEntry?.description, 'Code scope');
+    assert.equal(api.mappings.getTreeItem(scopeEntry).command, undefined, 'Glob scopes do not pretend to identify a line location');
+    cli(['map', 'archive', scoped.record.mapping.id, '--if-match', scoped.revision]);
     const nested = '00000000-0000-4000-8000-000000000002';
     cli(['map', 'create', backend, nested, 'scheduler.py:1-1', '--context', 'Another document']);
     assert.equal((await api.mappings.getChildren()).length, 1, 'Only the selected document connections are shown');
-    const mockState = async () => (await fetch(new URL('/test/state', process.env.LORE_TEST_NOTION_URL!))).json() as Promise<{ requestCount: number }>;
     const beforeRepeat = (await mockState()).requestCount;
     await api.openBackend({ backend, id: notionChild }, root);
     await api.backends.getChildren(roots[0]);
@@ -215,7 +313,7 @@ if (args.includes('edit')) {
     await api.open(page.document.id, root);
     assert.equal((await api.mappings.getChildren())[0].label, 'planner.py:2-3', 'Local documents use the same code connection view');
     await api.open(race.document.id, root);
-    await eventually(async () => await frame.locator('#local-mode').isVisible() ? true : undefined);
+    await eventually(async () => await frame.locator('#local-mode').isVisible() && (await frame.locator('#title').textContent()) === 'Save Race' ? true : undefined);
     assert.equal(await frame.locator('#body').inputValue(), 'Later editor draft while saving', 'Draft survives Notion and code navigation');
     assert.equal((await api.mappings.getChildren())[0].label, 'No connected code', 'An unconnected document does not show the previous document connections');
     const callsBeforeLocalAction = (await mockState()).requestCount;

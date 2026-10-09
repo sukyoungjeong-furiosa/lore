@@ -1,11 +1,12 @@
 import * as vscode from 'vscode';
 import * as fs from 'node:fs';
-import { call, configureSecrets, BackendConfiguration, DocumentReference, Located, LocatedMapping, LoreError, Retrieved, View } from './client';
+import { call, configureSecrets, migrateBackendTokens, BackendConfiguration, DocumentReference, Located, LocatedMapping, LoreError, Retrieved, View } from './client';
 import { KnowledgePanel } from './panel';
 import { Backends } from './backends';
 import { BackendPanel, selectionLocation } from './backend-panel';
 import { DocumentSurface } from './document-surface';
 import { Knowledge, KnowledgeEntry } from './knowledge';
+import { KnowledgeView } from './knowledge-view';
 import { Mappings, MappingEntry } from './mappings';
 type Root = vscode.WorkspaceFolder;
 interface Entry { label: string; root: Root; view?: View; children?: Entry[]; error?: string }
@@ -78,16 +79,23 @@ export function activate(context: vscode.ExtensionContext) {
   const surface = new DocumentSurface(context.extensionUri);
   const knowledge = new Knowledge(backends, documents);
   const mappings = new Mappings();
-  const tree = vscode.window.createTreeView('lore.knowledge', { treeDataProvider: knowledge });
+  const tree = new KnowledgeView(context, knowledge);
   const mappingTree = vscode.window.createTreeView('lore.mappings', { treeDataProvider: mappings });
+  const updateFilterDescription = () => {
+    tree.description = knowledge.filter
+      ? `${knowledge.regex ? 'Regex' : 'Filter'}: ${knowledge.filter}`
+      : `${documents.currentFile ? 'Current file · saved code' : 'Cache first'}${documents.archived ? ' · archived included' : ''}`;
+  };
   const refresh = () => {
     documents.refresh(); backends.refresh(); knowledge.refresh(); mappings.refresh(); lenses.fire();
-    tree.description = `${documents.currentFile ? 'Current file · saved code' : 'Cache first'}${documents.archived ? ' · archived included' : ''}`;
+    updateFilterDescription();
     mappingTree.description = mappings.selected?.title;
   };
+  context.subscriptions.push(vscode.window.registerWebviewViewProvider('lore.knowledge', tree, { webviewOptions: { retainContextWhenHidden: true } }));
   context.subscriptions.push(documents, backends, knowledge, mappings, tree, mappingTree, lenses, surface,
     surface.onDidChangeDocument(document => { mappings.select(document); mappingTree.description = document?.title; }),
     vscode.window.registerWebviewViewProvider('lore.reader', surface, { webviewOptions: { retainContextWhenHidden: true } }));
+  context.subscriptions.push(knowledge.onDidChangeTreeData(updateFilterDescription));
   documents.onExternalChange = refresh;
   backends.onExternalChange = refresh;
   async function rootFor(path?: string): Promise<string> {
@@ -135,9 +143,10 @@ export function activate(context: vscode.ExtensionContext) {
   });
   command('lore.setBackendToken', async (name?: string, path?: string) => {
     const root = await rootFor(path); const backend = name || await chooseBackend(root); if (!backend) return;
-    const token = await vscode.window.showInputBox({ prompt: 'Notion connection token or personal access token. Stored in VS Code SecretStorage.', password: true, ignoreFocusOut: true });
+    const token = await vscode.window.showInputBox({ prompt: 'Notion token. Shared with Lore CLI and agent hooks on this machine.', password: true, ignoreFocusOut: true });
     if (!token) return;
-    await context.secrets.store(`lore.backend.${backend}.token`, token.trim()); refresh();
+    await call(root, ['backend', 'auth', 'set', backend, '--stdin'], token);
+    await context.secrets.delete(`lore.backend.${backend}.token`); refresh();
   });
   command('lore.openBackend', async (reference: DocumentReference, path?: string) => {
     if (!reference || typeof reference.backend !== 'string' || typeof reference.id !== 'string') return;
@@ -146,7 +155,12 @@ export function activate(context: vscode.ExtensionContext) {
   command('lore.reloadDocument', () => surface.invokeBackendAction('fetch'));
   command('lore.openDocumentInNotion', () => surface.invokeBackendAction('original'));
   command('lore.openCodeLocation', (entry: MappingEntry) => mappings.openLocation(entry));
-  async function fetchBackend(entry?: KnowledgeEntry, withContent = false) {
+  async function fetchBackend(entry?: KnowledgeEntry | { loreEntryId: string }, withContent = false) {
+    if (entry && 'loreEntryId' in entry) {
+      const selected = tree.entry(entry.loreEntryId);
+      if (!selected) throw new Error('Select a current knowledge entry first.');
+      entry = selected;
+    }
     const source = entry?.kind === 'backend' ? entry.entry : undefined;
     const root = await rootFor(source?.root.uri.fsPath);
     const backend = source?.backend || await chooseBackend(root); if (!backend) return;
@@ -159,20 +173,12 @@ export function activate(context: vscode.ExtensionContext) {
       if (error instanceof LoreError && error.result) void vscode.window.showWarningMessage(`Lore: ${error.message}`); else throw error;
     } finally { refresh(); }
   }
-  command('lore.fetchBackend', (entry?: KnowledgeEntry) => fetchBackend(entry));
-  command('lore.fetchBackendContent', (entry?: KnowledgeEntry) => fetchBackend(entry, true));
+  command('lore.fetchBackend', (entry?: KnowledgeEntry | { loreEntryId: string }) => fetchBackend(entry));
+  command('lore.fetchBackendContent', (entry?: KnowledgeEntry | { loreEntryId: string }) => fetchBackend(entry, true));
   command('lore.indexBackend', async () => {
     const root = await rootFor(); const backend = await chooseBackend(root); if (!backend) return;
     const result = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Lore: Indexing Notion titles' }, () => call<Retrieved<{ documents: unknown[]; complete: boolean; warnings: string[] }>>(root, ['docs', 'index', backend]));
     void vscode.window.showInformationMessage(`Lore: Indexed ${result.value.documents.length} titles${result.value.complete ? '' : ' · incomplete; some pages could not be traversed'}`); refresh();
-  });
-  command('lore.searchBackend', async () => {
-    const root = await rootFor(); const backend = await chooseBackend(root); if (!backend) return;
-    const query = await vscode.window.showInputBox({ prompt: 'Search cached Notion titles. Run Lore: Index Notion Titles first.' }); if (query === undefined) return;
-    const results = await call<Retrieved<{ documents: { reference: DocumentReference; title: string }[]; complete: boolean }>>(root, ['docs', 'search', backend, query]);
-    const chosen = await vscode.window.showQuickPick(results.value.documents.map(document => ({ label: document.title, description: document.reference.id, reference: document.reference })),
-      { placeHolder: `Cached title index${results.value.complete ? '' : ' · incomplete'} · ${new Date(results.fetched_at_ms).toLocaleString()}` });
-    if (chosen) await openBackend(chosen.reference, root);
   });
   command('lore.attachNotion', async () => {
     const editor = vscode.window.activeTextEditor;
@@ -190,14 +196,7 @@ export function activate(context: vscode.ExtensionContext) {
     const view = await call<View>(root, ['create', title]); refresh(); await open(view.document.id, root);
   });
   command('lore.open', async (id: string, path?: string) => { if (typeof id !== 'string') return; await open(id, await rootFor(path)); });
-  command('lore.search', async (path?: string) => {
-    const root = await rootFor(path);
-    const query = await vscode.window.showInputBox({ prompt: 'Search local Lore documents' }); if (query === undefined) return;
-    const results = await call<{ id: string; title: string; curated: boolean; snippet: string }[]>(root, ['search', query]);
-    if (!results.length) { void vscode.window.showInformationMessage('Lore: No matching local documents'); return; }
-    const chosen = await vscode.window.showQuickPick(results.map(d => ({ label: d.title, description: d.curated ? 'curated' : 'uncurated', detail: d.snippet, id: d.id })), { placeHolder: 'Read knowledge' });
-    if (chosen) await open(chosen.id, root);
-  });
+  command('lore.search', () => tree.toggleFilter());
   command('lore.attach', async () => {
     const editor = vscode.window.activeTextEditor;
     if (!editor || editor.document.uri.scheme !== 'file') throw new Error('Select code in a saved file first');
@@ -238,6 +237,9 @@ export function activate(context: vscode.ExtensionContext) {
     },
   }));
   const output = vscode.window.createOutputChannel('Lore'); context.subscriptions.push(output);
+  for (const root of vscode.workspace.workspaceFolders || []) {
+    void migrateBackendTokens(root.uri.fsPath).then(refresh, () => output.appendLine('Stored backend token migration failed. Use Lore: Set Notion Connection Token to retry.'));
+  }
   refresh();
   return { refresh, open, openBackend, tree: documents, backends, panels, backendPanels, knowledge, mappings, surface };
 }

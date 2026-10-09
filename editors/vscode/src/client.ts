@@ -12,11 +12,34 @@ export interface BackendDocument { reference: DocumentReference; title: string; 
 export interface Retrieved<T> { cached: boolean; fetched_at_ms: number; value: T }
 export interface DocumentListing { documents: BackendDocument[]; warnings: string[] }
 export interface DocumentContent { document: BackendDocument; content: string; content_format: string; partial: boolean; warnings: string[] }
-export interface MappingView { revision: string; record: { actor: string; at_ms: number; mapping: { id: string; document: DocumentReference; context: string; archived: boolean; anchors: Anchor[] } } }
+export interface MappingView { revision: string; record: { actor: string; at_ms: number; mapping: { id: string; document: DocumentReference; context: string; archived: boolean; anchors: Anchor[]; scopes?: { repository: string; glob: string }[] } } }
 export interface LocatedMapping { view: MappingView; projections: Projection[] }
 export interface BackendConfiguration { kind: string; roots: string[]; token_env: string; api_url: string }
 let secretStorage: vscode.SecretStorage | undefined;
 export function configureSecrets(storage: vscode.SecretStorage): void { secretStorage = storage; }
+const migrations = new Map<string, Promise<void>>();
+export async function migrateBackendTokens(root: string): Promise<void> {
+  if (!secretStorage) return;
+  const configs = await call<Record<string, BackendConfiguration>>(root, ['backend', 'list']);
+  const home = vscode.workspace.getConfiguration('lore', vscode.Uri.file(root)).get<string>('dataHome') || process.env.LORE_HOME || '';
+  for (const backend of Object.keys(configs)) {
+    const key = `${home}:${backend}`;
+    let migration = migrations.get(key);
+    if (!migration) {
+      migration = (async () => {
+        const legacyKey = `lore.backend.${backend}.token`;
+        const token = await secretStorage!.get(legacyKey);
+        if (!token) return;
+        const status = await call<{ stored: boolean }>(root, ['backend', 'auth', 'status', backend]);
+        if (!status.stored) await call(root, ['backend', 'auth', 'set', backend, '--stdin'], token);
+        await secretStorage!.delete(legacyKey);
+      })();
+      migrations.set(key, migration);
+      migration.catch(() => migrations.delete(key));
+    }
+    await migration;
+  }
+}
 export class LoreError extends Error {
   constructor(public readonly kind: string, message: string, public readonly result?: unknown) { super(message); }
 }
@@ -24,13 +47,7 @@ export async function call<T>(root: string, args: string[], input?: string): Pro
   const config = vscode.workspace.getConfiguration('lore', vscode.Uri.file(root));
   const env = { ...process.env };
   if (config.get<string>('dataHome')) env.LORE_HOME = config.get<string>('dataHome');
-  if (args[0] === 'docs' && args[2] && secretStorage) {
-    const token = await secretStorage.get(`lore.backend.${args[2]}.token`);
-    if (token) {
-      const backends = await call<Record<string, BackendConfiguration>>(root, ['backend', 'list']);
-      if (backends[args[2]]) env[backends[args[2]].token_env] = token;
-    }
-  }
+  if (args[0] === 'docs') await migrateBackendTokens(root);
   return new Promise((resolve, reject) => {
     const child = spawn(config.get<string>('executable') || 'lore', ['--repo', root, '--json', '--author', 'human', ...args], { env, windowsHide: true });
     let out = '', error = ''; let size = 0;

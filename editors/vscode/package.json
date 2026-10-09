@@ -2,7 +2,7 @@
   "name": "lore",
   "displayName": "Lore",
   "description": "What the code doesn't tell you.",
-  "version": "0.1.3",
+  "version": "0.1.7",
   "publisher": "lore-local",
   "private": true,
   "engines": {
@@ -38,8 +38,8 @@
       },
       {
         "command": "lore.search",
-        "title": "Lore: Search Documents",
-        "icon": "$(search)"
+        "title": "Lore: Filter Knowledge Titles",
+        "icon": "$(filter)"
       },
       {
         "command": "lore.open",
@@ -72,11 +72,6 @@
       {
         "command": "lore.openBackend",
         "title": "Lore: Open Backend Document"
-      },
-      {
-        "command": "lore.searchBackend",
-        "title": "Lore: Search Notion Titles",
-        "icon": "$(search)"
       },
       {
         "command": "lore.indexBackend",
@@ -126,7 +121,8 @@
       "lore": [
         {
           "id": "lore.knowledge",
-          "name": "Knowledge"
+          "name": "Knowledge",
+          "type": "webview"
         },
         {
           "id": "lore.mappings",
@@ -158,10 +154,6 @@
         },
         {
           "command": "lore.connectNotion",
-          "when": "view == lore.knowledge"
-        },
-        {
-          "command": "lore.searchBackend",
           "when": "view == lore.knowledge"
         },
         {
@@ -201,15 +193,16 @@
           "group": "lore"
         }
       ],
-      "view/item/context": [
+      "webview/context": [
         {
           "command": "lore.fetchBackend",
-          "when": "view == lore.knowledge && (viewItem == lore.backend || viewItem == lore.backendDocument)",
-          "group": "inline"
+          "when": "webviewId == lore.knowledge && (webviewSection == lore.backend || webviewSection == lore.backendDocument)",
+          "group": "lore"
         },
         {
           "command": "lore.fetchBackendContent",
-          "when": "view == lore.knowledge && viewItem == lore.backend"
+          "when": "webviewId == lore.knowledge && webviewSection == lore.backend",
+          "group": "lore"
         }
       ]
     },
@@ -238,7 +231,7 @@
   },
   "scripts": {
     "build": "tsc --noEmit && node build.mjs",
-    "test": "npm run build && tsc -p test/tsconfig.json && node dist/test/run.js",
+    "test": "npm run build && tsc -p test/tsconfig.json && node dist/test/test/run.js",
     "package": "npm run build && vsce package --allow-missing-repository --skip-license",
     "vscode:prepublish": "npm run build"
   },

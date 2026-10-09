@@ -7,7 +7,7 @@ import { createServer } from 'node:net';
 import { createServer as createHttpServer } from 'node:http';
 async function main() {
   delete process.env.ELECTRON_RUN_AS_NODE;
-  const extension = path.resolve(__dirname, '../..');
+  const extension = path.resolve(__dirname, '../../..');
   const executable = path.resolve(extension, '../../target/debug/lore');
   const root = mkdtempSync(path.join(tmpdir(), 'lore-vscode-'));
   const workspace = path.join(root, 'code'); mkdirSync(workspace);
@@ -40,7 +40,7 @@ async function main() {
     } else if (url.pathname.endsWith('/markdown')) {
       value = { markdown: `# External knowledge\nOwned by Notion. Backend update ${backendVersion}. [Related design](https://www.notion.so/${nestedId.replaceAll('-', '')})\n<script>window.injection = true</script>\n[unsafe](command:workbench.action.closeWindow)`, truncated: false, unknown_block_ids: [] };
     } else if (url.pathname.endsWith('/children')) {
-      value = { results: id === rootId ? [{ id: childId, type: 'child_page', has_children: true, child_page: { title: 'Notion Scheduler Design' } }] : [], has_more: false, next_cursor: null };
+      value = { results: id === rootId ? [{ id: childId, type: 'child_page', has_children: true, child_page: { title: 'Notion Scheduler Design' } }] : id === childId ? [{ id: nestedId, type: 'child_page', has_children: false, child_page: { title: 'Nested Notion Design' } }] : [], has_more: false, next_cursor: null };
     }
     response.writeHead(value ? 200 : 404, { 'Content-Type': 'application/json' }); response.end(JSON.stringify(value || {}));
   });
@@ -49,7 +49,7 @@ async function main() {
   try {
     await runTests({
       vscodeExecutablePath: process.env.LORE_VSCODE_EXECUTABLE, version: '1.95.3',
-      extensionDevelopmentPath: extension, extensionTestsPath: path.join(extension, 'dist/test/extension.test.js'),
+      extensionDevelopmentPath: extension, extensionTestsPath: path.join(extension, 'dist/test/test/extension.test.js'),
       launchArgs: [workspace, '--no-sandbox', '--disable-gpu', '--disable-workspace-trust', '--skip-welcome', '--skip-release-notes', '--user-data-dir', path.join(root, 'user'), '--extensions-dir', path.join(root, 'extensions'), `--remote-debugging-port=${port}`],
       extensionTestsEnv: testEnv,
     });

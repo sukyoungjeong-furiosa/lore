@@ -38,7 +38,10 @@ export class Mappings implements vscode.TreeDataProvider<MappingEntry>, vscode.D
         const listed = await call<{ mappings: LocatedMapping[] }>(selected.root, ['map', 'ls']);
         const related = listed.mappings.filter(({ view }) => view.record.mapping.document.backend === ref.backend && view.record.mapping.document.id === ref.id);
         const located = await Promise.all(related.map(({ view }) => call<LocatedMapping>(selected.root, ['map', 'resolve', view.record.mapping.id])));
-        result = located.flatMap(({ view, projections }) => this.entries(selected, view.record.mapping.anchors, projections, view.record.mapping.context, view.record.mapping.id));
+        result = located.flatMap(({ view, projections }) => [
+          ...this.entries(selected, view.record.mapping.anchors, projections, view.record.mapping.context, view.record.mapping.id),
+          ...(view.record.mapping.scopes || []).map(scope => ({ label: scope.glob, description: 'Code scope', detail: [scope.repository, view.record.mapping.context].filter(Boolean).join('\n') }))
+        ]);
       } else {
         const args = ['show', selected.source.id]; if (selected.source.revision) args.push('--revision', selected.source.revision);
         const view = await call<View>(selected.root, args);
