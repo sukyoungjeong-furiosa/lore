@@ -5,13 +5,13 @@ A workspace provides a working context for mappings and knowledge discovery. It 
 ## State Ownership
 
 - Mapping availability, pending mapping changes, synchronization baselines, and code projections are workspace-specific.
-- Separate worktrees have independent working state. Changes are not propagated between workspaces implicitly.
+- Separate worktrees have independent working state. Changes are not propagated between workspaces implicitly. Initialization may reuse repository and storage defaults without copying local changes.
 - Workspaces may share immutable mapping revisions and document caches without sharing local changes or projections.
 - A cached external document remains backend-owned; caching does not grant access or editing permissions or create a Lore-owned copy.
 
 ## Knowledge Availability
 
-- A workspace need not hold every mapping or document from a source.
+- A workspace need not hold every mapping or document from a source. Shared mappings can be discovered without activating them locally.
 - File or directory installation selects mappings associated with the requested code scope, accounting for known code projections.
 - Installation makes complete mapping revisions available, including their document references and anchors. It does not require fetching document content.
 - Documents can be accessed on demand through their owning backend. Discovery distinguishes recorded mappings from unrecorded suggestions.

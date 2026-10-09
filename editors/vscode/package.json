@@ -1,0 +1,295 @@
+{
+  "name": "lore",
+  "displayName": "Lore",
+  "description": "What the code doesn't tell you.",
+  "version": "0.1.7",
+  "publisher": "lore-local",
+  "private": true,
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sukyoungjeong-furiosa/lore.git"
+  },
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onView:lore.knowledge",
+    "onView:lore.mappings",
+    "onView:lore.reader"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "lore.init",
+        "title": "Lore: Initialize Workspace"
+      },
+      {
+        "command": "lore.create",
+        "title": "Lore: Create Document",
+        "icon": "$(add)"
+      },
+      {
+        "command": "lore.attach",
+        "title": "Lore: Link Document to Code Selection",
+        "icon": "$(link)"
+      },
+      {
+        "command": "lore.search",
+        "title": "Lore: Filter Knowledge Titles",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "lore.open",
+        "title": "Lore: Open Document"
+      },
+      {
+        "command": "lore.refresh",
+        "title": "Lore: Refresh Knowledge Lists",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "lore.toggleArchived",
+        "title": "Lore: Include Archived Documents",
+        "icon": "$(archive)",
+        "toggled": "lore.includeArchived"
+      },
+      {
+        "command": "lore.connectNotion",
+        "title": "Lore: Connect Notion",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "lore.setBackendToken",
+        "title": "Lore: Set Notion Connection Token"
+      },
+      {
+        "command": "lore.openBackend",
+        "title": "Lore: Open Backend Document"
+      },
+      {
+        "command": "lore.indexBackend",
+        "title": "Lore: Index Notion Titles"
+      },
+      {
+        "command": "lore.toggleCached",
+        "title": "Lore: Toggle Offline Backend Reads",
+        "icon": "$(database)"
+      },
+      {
+        "command": "lore.fetchBackend",
+        "title": "Lore: Fetch Document List",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "lore.fetchBackendContent",
+        "title": "Lore: Fetch All Document Content"
+      },
+      {
+        "command": "lore.reloadDocument",
+        "title": "Lore: Reload Document",
+        "icon": "$(refresh)",
+        "enablement": "lore.readerHasDocument"
+      },
+      {
+        "command": "lore.openDocumentInNotion",
+        "title": "Lore: Open in Notion",
+        "icon": "$(link-external)",
+        "enablement": "lore.readerIsBackendDocument"
+      },
+      {
+        "command": "lore.refreshMappings",
+        "title": "Lore: Refresh Mappings",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "lore.enableChildDiscovery",
+        "title": "Lore: Discover Child Documents"
+      },
+      {
+        "command": "lore.disableChildDiscovery",
+        "title": "Lore: Stop Discovering Child Documents"
+      },
+      {
+        "command": "lore.toggleChildDiscovery",
+        "title": "Lore: Discover Child Documents",
+        "toggled": "lore.readerChildDiscovery",
+        "enablement": "lore.readerIsBackendDocument"
+      },
+      {
+        "command": "lore.editDocument",
+        "title": "Lore: Edit Document",
+        "icon": "$(edit)",
+        "enablement": "lore.readerIsLocalDocument && !lore.readerIsHistorical && !lore.readerEditing && !lore.readerBusy"
+      },
+      {
+        "command": "lore.archiveDocument",
+        "title": "Lore: Archive Document",
+        "enablement": "lore.readerIsLocalDocument && !lore.readerIsHistorical && !lore.readerDirty && !lore.readerBusy"
+      },
+      {
+        "command": "lore.restoreDocument",
+        "title": "Lore: Restore Document",
+        "enablement": "lore.readerIsLocalDocument && !lore.readerIsHistorical && !lore.readerDirty && !lore.readerBusy"
+      },
+      {
+        "command": "lore.documentHistory",
+        "title": "Lore: Document History",
+        "icon": "$(history)",
+        "enablement": "lore.readerIsLocalDocument && !lore.readerBusy"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "lore",
+          "title": "Lore",
+          "icon": "media/lore.svg"
+        }
+      ]
+    },
+    "views": {
+      "lore": [
+        {
+          "id": "lore.knowledge",
+          "name": "Knowledge",
+          "type": "webview"
+        },
+        {
+          "id": "lore.mappings",
+          "name": "Mappings"
+        },
+        {
+          "id": "lore.reader",
+          "name": "Document",
+          "type": "webview"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "lore.create",
+          "when": "view == lore.knowledge",
+          "group": "navigation"
+        },
+        {
+          "command": "lore.search",
+          "when": "view == lore.knowledge",
+          "group": "navigation"
+        },
+        {
+          "command": "lore.refresh",
+          "when": "view == lore.knowledge",
+          "group": "navigation"
+        },
+        {
+          "command": "lore.toggleArchived",
+          "when": "view == lore.knowledge"
+        },
+        {
+          "command": "lore.refreshMappings",
+          "when": "view == lore.mappings"
+        },
+        {
+          "command": "lore.reloadDocument",
+          "when": "view == lore.reader && lore.readerHasDocument",
+          "group": "navigation@1"
+        },
+        {
+          "command": "lore.openDocumentInNotion",
+          "when": "view == lore.reader && lore.readerIsBackendDocument",
+          "group": "navigation@2"
+        },
+        {
+          "command": "lore.toggleChildDiscovery",
+          "when": "view == lore.reader && lore.readerIsBackendDocument"
+        },
+        {
+          "command": "lore.editDocument",
+          "when": "view == lore.reader && lore.readerIsLocalDocument && !lore.readerIsHistorical",
+          "group": "navigation@2"
+        },
+        {
+          "command": "lore.archiveDocument",
+          "when": "view == lore.reader && lore.readerIsLocalDocument && !lore.readerArchived"
+        },
+        {
+          "command": "lore.restoreDocument",
+          "when": "view == lore.reader && lore.readerIsLocalDocument && lore.readerArchived"
+        },
+        {
+          "command": "lore.documentHistory",
+          "when": "view == lore.reader && lore.readerIsLocalDocument"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "lore.attach",
+          "group": "lore"
+        }
+      ],
+      "webview/context": [
+        {
+          "command": "lore.fetchBackendContent",
+          "when": "webviewId == lore.knowledge && webviewSection == lore.backend",
+          "group": "lore"
+        },
+        {
+          "command": "lore.enableChildDiscovery",
+          "when": "webviewId == lore.knowledge && webviewSection == lore.backendDocument",
+          "group": "lore"
+        },
+        {
+          "command": "lore.disableChildDiscovery",
+          "when": "webviewId == lore.knowledge && webviewSection == lore.discoveryPage",
+          "group": "lore"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Lore",
+      "properties": {
+        "lore.executable": {
+          "type": "string",
+          "default": "lore",
+          "scope": "machine",
+          "description": "Path to the locally installed Lore CLI."
+        },
+        "lore.dataHome": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Optional LORE_HOME override. Empty uses the CLI default."
+        },
+        "lore.codeLens": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show related Lore documents using saved code."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc --noEmit && node build.mjs",
+    "test": "npm run build && tsc -p test/tsconfig.json && node dist/test/test/run.js",
+    "package": "npm run build && vsce package --allow-missing-repository --skip-license",
+    "vscode:prepublish": "npm run build"
+  },
+  "dependencies": {
+    "markdown-it": "^14.1.0"
+  },
+  "devDependencies": {
+    "@types/markdown-it": "^14.1.2",
+    "@types/node": "^20.0.0",
+    "@types/vscode": "1.95.0",
+    "@vscode/test-electron": "^2.5.2",
+    "@vscode/vsce": "^3.6.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.7.0",
+    "playwright-core": "^1.51.0"
+  }
+}

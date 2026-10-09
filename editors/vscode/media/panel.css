@@ -1,0 +1,41 @@
+body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); padding: 16px 24px; line-height: 1.6; max-width: 1050px; margin: auto; }
+header { display: flex; align-items: center; gap: 10px; padding-bottom: 12px; border-bottom: 1px solid var(--vscode-panel-border); }
+header span { flex: 1; font-weight: 700; }
+button, input, select, textarea { font-family: inherit; font-size: inherit; }
+button { color: var(--vscode-button-foreground); background: var(--vscode-button-background); border: 0; border-radius: 3px; padding: 5px 10px; cursor: pointer; }
+button:hover { background: var(--vscode-button-hoverBackground); }
+button:disabled { opacity: .45; cursor: default; }
+nav { display: flex; gap: 8px; margin: 16px 0; }
+input, select, textarea { background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border, transparent); padding: 6px; border-radius: 3px; }
+#search-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 16px 0; }
+#query { flex: 1; min-width: 150px; }
+#status, #backend-status, #draft-status { color: var(--vscode-descriptionForeground); font-size: .9em; }
+#edit-title { box-sizing: border-box; display: block; width: 100%; margin: 8px 0; }
+#body { box-sizing: border-box; width: 100%; min-height: 50vh; resize: vertical; font-family: var(--vscode-editor-font-family); line-height: 1.6; tab-size: 4; }
+.wiki { display: inline; padding: 0; color: var(--vscode-textLink-foreground); background: transparent; text-align: inherit; }
+.wiki:hover { text-decoration: underline; background: transparent; }
+a { color: var(--vscode-textLink-foreground); }
+pre, code { font-family: var(--vscode-editor-font-family); background: var(--vscode-textCodeBlock-background); }
+pre { overflow: auto; padding: 12px; }
+#references { border-top: 1px solid var(--vscode-panel-border); margin-top: 24px; padding-top: 8px; }
+#references button, #results button { margin: 4px 6px 4px 0; }
+#error { color: var(--vscode-errorForeground); white-space: pre-wrap; }
+table { border-collapse: collapse; } th, td { border: 1px solid var(--vscode-panel-border); padding: 6px 12px; }
+[hidden] { display: none !important; }
+
+
+body { padding: 10px; max-width: none; }
+header, nav, #search-form { flex-wrap: wrap; }
+h1 { font-size: 1.4em; overflow-wrap: anywhere; }
+#body { min-height: 240px; }
+#backend-reader, #reader, #mapping-context { overflow-wrap: anywhere; }
+#mapping-context { white-space: pre-wrap; }
+pre, table { max-width: 100%; overflow: auto; }
+button { margin: 2px; }
+
+#references { margin-top: 24px; padding-top: 12px; border-top: 1px solid var(--vscode-panel-border); }
+#references h2 { font-size: 1em; color: var(--vscode-descriptionForeground); }
+#backlinks a { display: block; }
+a { color: var(--vscode-textLink-foreground); }
+a:hover { color: var(--vscode-textLink-activeForeground); }
+#edit-directory { box-sizing: border-box; display: block; width: 100%; margin: 8px 0; }

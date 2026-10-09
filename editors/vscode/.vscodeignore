@@ -1,0 +1,8 @@
+src/**
+test/**
+node_modules/**
+build.mjs
+tsconfig.json
+package-lock.json
+dist/test/**
+**/*.map
