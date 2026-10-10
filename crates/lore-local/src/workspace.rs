@@ -24,6 +24,7 @@ pub struct WorkspaceState {
     pub schema_version: u32,
     pub checkout: PathBuf,
     pub repository_id: String,
+    /// Immutable revision cache location, independent of the selected mapping stores.
     pub store: PathBuf,
     pub documents: BTreeMap<DocumentId, ActiveDocument>,
     #[serde(default)]
@@ -33,12 +34,18 @@ pub struct WorkspaceState {
         BTreeMap<lore_core::MappingStoreId, BTreeMap<lore_core::MappingId, ActiveDocument>>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub connected_remotes: BTreeMap<lore_core::MappingStoreId, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_store: Option<crate::LocalStoreConnection>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub connected_local_stores: BTreeMap<lore_core::MappingStoreId, PathBuf>,
 }
 
 #[derive(Serialize, Deserialize)]
 struct CheckoutDefaults {
     repository_id: String,
     store: PathBuf,
+    #[serde(default)]
+    local_store: Option<crate::LocalStoreConnection>,
 }
 
 pub struct Workspace {
@@ -86,6 +93,16 @@ impl Workspace {
         checkout: &Path,
         store: Option<&Path>,
         identity: Option<String>,
+    ) -> Result<Self> {
+        Self::init_with_local_store(home, checkout, store, identity, None)
+    }
+
+    pub fn init_with_local_store(
+        home: &Path,
+        checkout: &Path,
+        store: Option<&Path>,
+        identity: Option<String>,
+        local_store_name: Option<&str>,
     ) -> Result<Self> {
         let mut code = GitRepository::discover(checkout, identity.clone())?;
         let home = absolute(home)?;
@@ -149,6 +166,34 @@ impl Workspace {
                 "Lore data must be stored outside the code checkout and Git directory",
             ));
         }
+        let registry = crate::LocalStoreRegistry::new(&home);
+        let local_store = if let Some(name) = local_store_name {
+            registry.get(name)?
+        } else if let Some(connection) = existing
+            .as_ref()
+            .and_then(|state| state.local_store.clone())
+        {
+            connection
+        } else if let Some(connection) = defaults
+            .as_ref()
+            .and_then(|defaults| defaults.local_store.clone())
+        {
+            connection
+        } else {
+            registry.ensure_personal()?
+        };
+        let local_store =
+            crate::LocalStoreConnection::open(&local_store.directory).and_then(|observed| {
+                if observed.store != local_store.store {
+                    Err(Error::new(
+                        ErrorKind::Conflict,
+                        "Local store identity changed; select a store explicitly",
+                    ))
+                } else {
+                    Ok(observed)
+                }
+            })?;
+        local_store.register(std::slice::from_ref(&code.repository_id), &[])?;
         let state_path = Self::state_path(&home, &code.root);
         std::fs::create_dir_all(state_path.parent().unwrap())?;
         let lock = std::fs::OpenOptions::new()
@@ -176,13 +221,25 @@ impl Workspace {
                 mappings: BTreeMap::new(),
                 store_mappings: BTreeMap::new(),
                 connected_remotes: BTreeMap::new(),
+                local_store: None,
+                connected_local_stores: BTreeMap::new(),
             };
             atomic_write(&state_path, &serde_json::to_vec_pretty(&state)?)?;
         }
-        let state: WorkspaceState = serde_json::from_slice(&std::fs::read(&state_path)?)?;
+        let mut state: WorkspaceState = serde_json::from_slice(&std::fs::read(&state_path)?)?;
+        if state.local_store.as_ref() != Some(&local_store)
+            || state.connected_local_stores.get(&local_store.store) != Some(&local_store.directory)
+        {
+            state
+                .connected_local_stores
+                .insert(local_store.store.clone(), local_store.directory.clone());
+            state.local_store = Some(local_store);
+            atomic_write(&state_path, &serde_json::to_vec_pretty(&state)?)?;
+        }
         let settings = CheckoutDefaults {
             repository_id: state.repository_id.clone(),
             store: state.store.clone(),
+            local_store: state.local_store.clone(),
         };
         let workspace = Self::from_state(state_path, code, state)?;
         if defaults.is_none() {

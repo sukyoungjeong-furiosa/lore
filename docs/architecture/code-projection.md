@@ -1,7 +1,7 @@
 # Code Projection
 
 Code projection describes correspondence between a recorded anchor and a target
-code state, independently of the document backend. Server reconciliation is defined in [Synchronization](synchronization.md#server-reconciliation).
+code state, independently of the document backend. Canonical reconciliation is defined in [Synchronization](synchronization.md#canonical-reconciliation).
 
 ## Reference
 

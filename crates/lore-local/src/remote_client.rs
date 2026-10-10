@@ -114,7 +114,7 @@ impl HttpMappingRemote {
     }
 }
 
-impl MappingRemote for HttpMappingRemote {
+impl MappingStoreClient for HttpMappingRemote {
     fn descriptor(&self) -> Result<MappingStoreDescriptor> {
         match self.request(StoreRequest::Describe {
             store: self.connection.store.clone(),
@@ -236,7 +236,7 @@ impl RemoteCatalogCache {
 
     pub fn fetch(
         &self,
-        remote: &dyn MappingRemote,
+        remote: &dyn MappingStoreClient,
         repository: &str,
     ) -> Result<RemoteCatalogObservation> {
         let catalog = remote.catalog(repository)?;

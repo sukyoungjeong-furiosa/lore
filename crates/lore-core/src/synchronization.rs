@@ -94,7 +94,7 @@ pub struct PublicationReceipt {
 }
 
 /// Shared mapping access is independent of document retrieval and local workspace activation.
-pub trait MappingRemote {
+pub trait MappingStoreClient {
     fn descriptor(&self) -> Result<MappingStoreDescriptor>;
     fn catalog(&self, repository: &str) -> Result<StoreCatalog>;
     fn read(&self, mapping: &MappingId, revision: Option<&RevisionId>) -> Result<MappingBundle>;

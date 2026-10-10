@@ -1,0 +1,11 @@
+[package]
+name = "lore-store"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+lore-core = { path = "../lore-core" }
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true

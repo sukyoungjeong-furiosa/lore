@@ -726,6 +726,7 @@ version = "0.1.0"
 dependencies = [
  "lore-core",
  "lore-server",
+ "lore-store",
  "reqwest",
  "serde",
  "serde_json",
@@ -759,10 +760,21 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "lore-core",
+ "lore-store",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
+]
+
+[[package]]
+name = "lore-store"
+version = "0.1.0"
+dependencies = [
+ "lore-core",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

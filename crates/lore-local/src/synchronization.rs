@@ -58,6 +58,22 @@ fn shared_active(
 }
 
 impl Workspace {
+    pub fn connect_local_store(&self, connection: &crate::LocalStoreConnection) -> Result<()> {
+        let observed = crate::LocalStoreConnection::open(&connection.directory)?;
+        if observed.store != connection.store {
+            return Err(Error::new(
+                ErrorKind::Conflict,
+                "Local store identity changed",
+            ));
+        }
+        let _lock = self.lock()?;
+        let mut state = self.state()?;
+        state
+            .connected_local_stores
+            .insert(connection.store.clone(), observed.directory);
+        atomic_write(&self.state_path, &serde_json::to_vec_pretty(&state)?)
+    }
+
     pub fn connect_remote(&self, store: &MappingStoreId, name: &str) -> Result<()> {
         let _lock = self.lock()?;
         let mut state = self.state()?;
@@ -107,7 +123,7 @@ impl Workspace {
     /// Persists the exact request before publication. Retrying a pending request preserves its identity and payload.
     pub fn push_mapping(
         &self,
-        remote: &dyn MappingRemote,
+        remote: &dyn MappingStoreClient,
         store: &MappingStoreId,
         id: &MappingId,
         from_store: Option<&MappingStoreId>,
@@ -287,7 +303,7 @@ impl Workspace {
     /// Fetches complete mapping ancestry without activating it or changing baselines.
     pub fn fetch_mapping(
         &self,
-        remote: &dyn MappingRemote,
+        remote: &dyn MappingStoreClient,
         store: &MappingStoreId,
         id: &MappingId,
     ) -> Result<MappingBundle> {
@@ -314,7 +330,7 @@ impl Workspace {
 
     pub fn pull_mapping(
         &self,
-        remote: &dyn MappingRemote,
+        remote: &dyn MappingStoreClient,
         store: &MappingStoreId,
         id: &MappingId,
     ) -> Result<PullResult> {
@@ -435,7 +451,7 @@ impl Workspace {
     /// Applies an explicit resolution against observed revisions. Publication still checks the shared head.
     pub fn resolve_mapping_conflict(
         &self,
-        remote: &dyn MappingRemote,
+        remote: &dyn MappingStoreClient,
         key: &SharedMappingKey,
         expected_local: &RevisionId,
         expected_shared: &RevisionId,

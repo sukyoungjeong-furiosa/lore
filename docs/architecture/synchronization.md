@@ -4,6 +4,8 @@ Synchronization exchanges Lore-managed mapping revisions between a workspace and
 
 Published mapping revisions are immutable; updates create new revisions. External document changes follow their owning backend's contract. These operations do not synchronize document content.
 
+The same contracts apply to direct filesystem access and network access. Synchronization requires neither canonical reconciliation nor model inference; submitted code references are preserved without them.
+
 ## Fetch
 
 - Fetch retrieves mapping revisions without changing active mapping revisions, local edits, or synchronization baselines.
@@ -22,9 +24,10 @@ Published mapping revisions are immutable; updates create new revisions. Externa
 - Conflicts preserve local changes. Successful publication identifies the final published revision and whether reconciliation is pending; publication does not wait for model inference.
 - Document retrieval failure alone does not prevent publication of a mapping that retains its document reference.
 
-## Server Reconciliation
+## Canonical Reconciliation
 
-- The server attempts to reconcile submitted anchors with the canonical ref configured for the mapping store and code repository, such as `upstream/master`.
+- When enabled, reconciliation attempts to relate submitted anchors to the canonical ref configured for the mapping store and code repository, such as `upstream/master`.
+- Reconciliation is optional background maintenance, independent of direct or server-mediated publication. Its absence does not prevent Push or Pull.
 - Reconciliation uses [code projection](code-projection.md). Correspondence is recorded separately against the published mapping revision and canonical code revision while preserving the submitted reference.
 - If correspondence cannot be established, the published reference remains available with explicit uncertainty. Reconciliation does not rewrite a published revision.
 - Reconciliation does not modify the referenced document or establish human confirmation of the mapping.

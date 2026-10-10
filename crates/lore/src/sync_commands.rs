@@ -1,5 +1,8 @@
-use lore_core::{Error, MappingId, MappingRemote, Result};
-use lore_local::{HttpMappingRemote, RemoteCatalogCache, RemoteRegistry, Workspace};
+use lore_core::{Error, ErrorKind, MappingId, MappingStoreClient, MappingStoreId, Result};
+use lore_local::{
+    HttpMappingRemote, LocalMappingClient, LocalStoreConnection, LocalStoreRegistry, LoreRemote,
+    RemoteCatalogCache, RemoteRegistry, Workspace,
+};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
@@ -7,25 +10,88 @@ pub fn client(home: &Path, name: &str) -> Result<HttpMappingRemote> {
     HttpMappingRemote::new(home, name, RemoteRegistry::new(home).get(name)?)
 }
 
+enum Connection {
+    Local(LocalStoreConnection),
+    Http {
+        name: String,
+        connection: LoreRemote,
+    },
+}
+
+pub struct SelectedStore {
+    pub store: MappingStoreId,
+    pub client: Box<dyn MappingStoreClient>,
+    connection: Connection,
+}
+
+impl SelectedStore {
+    fn connect(&self, workspace: &Workspace) -> Result<()> {
+        match &self.connection {
+            Connection::Local(connection) => workspace.connect_local_store(connection),
+            Connection::Http { name, connection } => {
+                workspace.connect_remote(&connection.store, name)
+            }
+        }
+    }
+}
+
+pub fn select(
+    workspace: &Workspace,
+    home: &Path,
+    remote: Option<&str>,
+    local: Option<&str>,
+) -> Result<SelectedStore> {
+    if remote.is_some() && local.is_some() {
+        return Err(Error::invalid("Select either --remote or --local-store"));
+    }
+    if let Some(name) = remote {
+        let connection = RemoteRegistry::new(home).get(name)?;
+        return Ok(SelectedStore {
+            store: connection.store.clone(),
+            client: Box::new(HttpMappingRemote::new(home, name, connection.clone())?),
+            connection: Connection::Http {
+                name: name.into(),
+                connection,
+            },
+        });
+    }
+    let connection = if let Some(name) = local {
+        LocalStoreRegistry::new(home).get(name)?
+    } else {
+        workspace.state()?.local_store.ok_or_else(|| {
+            Error::new(
+                ErrorKind::NotInitialized,
+                "Run lore init to select a local mapping store",
+            )
+        })?
+    };
+    Ok(SelectedStore {
+        store: connection.store.clone(),
+        client: Box::new(LocalMappingClient::new(connection.clone())?),
+        connection: Connection::Local(connection),
+    })
+}
+
 pub fn push(
     workspace: &Workspace,
     home: &Path,
-    name: &str,
     id: &MappingId,
-    from: Option<&str>,
+    remote: Option<&str>,
+    local: Option<&str>,
+    from_remote: Option<&str>,
+    from_local: Option<&str>,
 ) -> Result<Value> {
-    let remote = client(home, name)?;
-    let from = from
-        .map(|name| {
-            RemoteRegistry::new(home)
-                .get(name)
-                .map(|remote| remote.store)
-        })
-        .transpose()?;
-    workspace.connect_remote(&remote.connection.store, name)?;
+    let target = select(workspace, home, remote, local)?;
+    let from = match (from_remote, from_local) {
+        (Some(name), None) => Some(RemoteRegistry::new(home).get(name)?.store),
+        (None, Some(name)) => Some(LocalStoreRegistry::new(home).get(name)?.store),
+        (None, None) => None,
+        _ => return Err(Error::invalid("Select one source store")),
+    };
+    target.connect(workspace)?;
     Ok(serde_json::to_value(workspace.push_mapping(
-        &remote,
-        &remote.connection.store,
+        target.client.as_ref(),
+        &target.store,
         id,
         from.as_ref(),
     )?)?)
@@ -34,16 +100,17 @@ pub fn push(
 pub fn pull(
     workspace: &Workspace,
     home: &Path,
-    name: &str,
+    remote: Option<&str>,
+    local: Option<&str>,
     id: Option<&MappingId>,
     path: Option<&PathBuf>,
     backend: Option<&str>,
 ) -> Result<Value> {
-    let remote = client(home, name)?;
-    let store = &remote.connection.store;
-    workspace.connect_remote(store, name)?;
-    let observation =
-        RemoteCatalogCache::new(home).fetch(&remote, &workspace.code.repository_id)?;
+    let target = select(workspace, home, remote, local)?;
+    let store = &target.store;
+    target.connect(workspace)?;
+    let observation = RemoteCatalogCache::new(home)
+        .fetch(target.client.as_ref(), &workspace.code.repository_id)?;
     let requested = path.map(|path| super::scope(workspace, path)).transpose()?;
     let recursive = path.is_some_and(|path| workspace.code.root.join(path).is_dir());
     let ids: Vec<_> = match id {
@@ -63,7 +130,7 @@ pub fn pull(
     for id in ids {
         let result: Result<Option<Value>> = (|| {
             let before = workspace.observed_store_mapping(store, &id)?;
-            let bundle = workspace.fetch_mapping(&remote, store, &id)?;
+            let bundle = workspace.fetch_mapping(target.client.as_ref(), store, &id)?;
             if backend.is_some_and(|backend| {
                 bundle
                     .head()
@@ -97,20 +164,22 @@ pub fn pull(
 pub fn fetch(
     workspace: &Workspace,
     home: &Path,
-    name: &str,
+    remote: Option<&str>,
+    local: Option<&str>,
     id: Option<&MappingId>,
 ) -> Result<Value> {
-    let remote = client(home, name)?;
+    let target = select(workspace, home, remote, local)?;
     if let Some(id) = id {
         return Ok(serde_json::to_value(workspace.fetch_mapping(
-            &remote,
-            &remote.connection.store,
+            target.client.as_ref(),
+            &target.store,
             id,
         )?)?);
     }
-    Ok(serde_json::to_value(
-        RemoteCatalogCache::new(home).fetch(&remote, &workspace.code.repository_id)?,
-    )?)
+    Ok(serde_json::to_value(RemoteCatalogCache::new(home).fetch(
+        target.client.as_ref(),
+        &workspace.code.repository_id,
+    )?)?)
 }
 
 pub fn inspect(home: &Path, name: &str) -> Result<Value> {

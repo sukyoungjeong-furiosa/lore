@@ -21,7 +21,7 @@ pub enum ConflictChoice {
 
 #[derive(Subcommand)]
 pub enum MapOperation {
-    /// Resolve a reported conflict explicitly; --remote selects the store.
+    /// Resolve a conflict in the default local store, or select a store connection explicitly.
     ResolveConflict {
         id: MappingId,
         #[arg(long)]

@@ -1,10 +1,10 @@
 use crate::{
-    BackendRegistry, CatalogStore, HttpMappingRemote, RemoteCatalogCache, RemoteRegistry,
-    Workspace, atomic_write,
+    BackendRegistry, CatalogStore, HttpMappingRemote, LocalMappingClient, LocalStoreConnection,
+    RemoteCatalogCache, RemoteRegistry, Workspace, atomic_write,
 };
 use lore_core::{
-    AnchorSummary, ErrorKind, LoreDocument, RelatedLore, Result, RoutingDocument, discover_lore,
-    hash,
+    AnchorSummary, ErrorKind, LoreDocument, MappingStoreClient, RelatedLore, Result,
+    RoutingDocument, discover_lore, hash,
 };
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeSet, path::Path};
@@ -199,6 +199,42 @@ impl Workspace {
                     documents.extend(shared);
                 }
                 Err(error) => warnings.push(format!("Lore remote {name}: {}", error.message)),
+            }
+        }
+        for (store, directory) in &state.connected_local_stores {
+            let catalog = (|| {
+                let client = LocalMappingClient::new(LocalStoreConnection {
+                    store: store.clone(),
+                    directory: directory.clone(),
+                })?;
+                client.catalog(&self.code.repository_id)
+            })();
+            match catalog {
+                Ok(catalog) => {
+                    for (id, entry) in catalog.catalog.mappings {
+                        let mapping = entry.view.record.mapping;
+                        let document = LoreDocument::Backend {
+                            reference: mapping.document,
+                        };
+                        if !mapping.archived
+                            && !state
+                                .store_mappings
+                                .get(store)
+                                .is_some_and(|mappings| mappings.contains_key(&id))
+                            && !excluded.contains(&document)
+                        {
+                            documents.push(RoutingDocument {
+                                store: Some(store.clone()),
+                                mapping: Some(id),
+                                document,
+                                title: entry.title,
+                                scopes: mapping.scopes,
+                                anchors: mapping.anchors,
+                            });
+                        }
+                    }
+                }
+                Err(error) => warnings.push(format!("Local store {store}: {}", error.message)),
             }
         }
         let mut related = discover_lore(&documents, &self.code.repository_id, paths)?;

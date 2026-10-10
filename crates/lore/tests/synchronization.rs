@@ -209,9 +209,10 @@ fn two_users_share_mapping_history_discovery_projection_and_explicit_conflict_re
     let other = setup.create("src/other.rs:1", "00000000-0000-4000-8000-000000000002");
     let id = first["record"]["mapping"]["id"].as_str().unwrap();
     let original = first["revision"].as_str().unwrap();
-    setup.alice.ok(&["push", "team", id]);
+    setup.alice.ok(&["push", "--remote", "team", id]);
     setup.alice.ok(&[
         "push",
+        "--remote",
         "team",
         other["record"]["mapping"]["id"].as_str().unwrap(),
     ]);
@@ -245,7 +246,9 @@ fn two_users_share_mapping_history_discovery_projection_and_explicit_conflict_re
         &["mv", "src/scheduler.rs", "src/planner.rs"],
     );
     git(&setup.bob.repo, &["commit", "-qm", "rename"]);
-    let pulled = setup.bob.ok(&["pull", "team", "--path", "src/planner.rs"]);
+    let pulled = setup
+        .bob
+        .ok(&["pull", "--remote", "team", "--path", "src/planner.rs"]);
     assert_eq!(pulled["results"].as_array().unwrap().len(), 1);
     assert_eq!(
         setup.bob.ok(&["map", "ls", "--remote", "team"])["mappings"]
@@ -281,13 +284,15 @@ fn two_users_share_mapping_history_discovery_projection_and_explicit_conflict_re
         "--context",
         "alice change",
     ]);
-    setup.alice.ok(&["push", "team", id]);
-    let rejected = setup.bob.run(&["push", "team", id], None);
+    setup.alice.ok(&["push", "--remote", "team", id]);
+    let rejected = setup.bob.run(&["push", "--remote", "team", id], None);
     assert_eq!(
         serde_json::from_slice::<Value>(&rejected.stderr).unwrap()["error"]["kind"],
         "conflict"
     );
-    let conflict = setup.bob.run(&["pull", "team", "--id", id], None);
+    let conflict = setup
+        .bob
+        .run(&["pull", "--remote", "team", "--id", id], None);
     assert_eq!(conflict.status.code(), Some(3));
     assert_eq!(
         serde_json::from_slice::<Value>(&conflict.stdout).unwrap()["results"][0]["status"],
@@ -310,8 +315,8 @@ fn two_users_share_mapping_history_discovery_projection_and_explicit_conflict_re
         "--take",
         "local",
     ]);
-    setup.bob.ok(&["push", "team", id]);
-    setup.alice.ok(&["pull", "team", "--id", id]);
+    setup.bob.ok(&["push", "--remote", "team", id]);
+    setup.alice.ok(&["pull", "--remote", "team", "--id", id]);
     assert_eq!(
         setup.alice.ok(&["map", "show", id, "--remote", "team"])["record"]["mapping"]["context"],
         "bob change"
@@ -321,7 +326,7 @@ fn two_users_share_mapping_history_discovery_projection_and_explicit_conflict_re
         .connect("personal", "personal", &setup.daemon.url, "test-only-alice");
     setup
         .alice
-        .ok(&["push", "personal", id, "--from-remote", "team"]);
+        .ok(&["push", "--remote", "personal", id, "--from-remote", "team"]);
     assert!(!setup.alice.run(&["map", "show", id], None).status.success());
     let personal = setup.alice.ok(&["map", "show", id, "--remote", "personal"]);
     let private_edit = setup.alice.ok(&[
@@ -381,13 +386,13 @@ fn server_restart_preserves_heads_and_read_only_credentials_cannot_publish() {
     let mut setup = Setup::new();
     let first = setup.create("src/scheduler.rs:1", "00000000-0000-4000-8000-000000000001");
     let id = first["record"]["mapping"]["id"].as_str().unwrap();
-    setup.alice.ok(&["push", "team", id]);
+    setup.alice.ok(&["push", "--remote", "team", id]);
     setup.bob.input(
         &["remote", "auth", "set", "team", "--stdin"],
         Some("test-only-reader"),
     );
-    setup.bob.ok(&["pull", "team", "--id", id]);
-    let output = setup.bob.run(&["push", "team", id], None);
+    setup.bob.ok(&["pull", "--remote", "team", "--id", id]);
+    let output = setup.bob.run(&["push", "--remote", "team", id], None);
     assert_eq!(
         serde_json::from_slice::<Value>(&output.stderr).unwrap()["error"]["kind"],
         "permission_denied"
@@ -417,5 +422,5 @@ fn server_restart_preserves_heads_and_read_only_credentials_cannot_publish() {
             ["view"]["revision"],
         first["revision"]
     );
-    setup.alice.ok(&["pull", "team", "--id", id]);
+    setup.alice.ok(&["pull", "--remote", "team", "--id", id]);
 }

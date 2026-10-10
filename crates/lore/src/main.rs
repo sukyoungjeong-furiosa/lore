@@ -11,6 +11,7 @@ mod mapping_commands;
 mod remote_commands;
 mod resolver_commands;
 mod server_commands;
+mod store_commands;
 mod sync_commands;
 
 #[derive(Parser)]
@@ -45,22 +46,44 @@ impl From<Author> for Actor {
 
 #[derive(Subcommand)]
 enum Operation {
-    /// Publish one mapping revision to a selected Lore remote.
+    /// Publish one mapping to the workspace's local store, or select another destination.
     Push {
-        remote: String,
         id: lore_core::MappingId,
         #[arg(long)]
+        remote: Option<String>,
+        #[arg(long, conflicts_with = "remote")]
+        local_store: Option<String>,
+        #[arg(long)]
         from_remote: Option<String>,
+        #[arg(long, conflicts_with = "from_remote")]
+        from_local_store: Option<String>,
     },
     /// Incorporate shared mappings for this repository without overwriting local changes.
     Pull {
-        remote: String,
+        #[arg(long)]
+        remote: Option<String>,
+        #[arg(long, conflicts_with = "remote")]
+        local_store: Option<String>,
         #[arg(long, conflicts_with = "path")]
         id: Option<lore_core::MappingId>,
         #[arg(long)]
         path: Option<PathBuf>,
         #[arg(long)]
         backend: Option<String>,
+    },
+    /// Cache shared mapping metadata or history without changing active revisions.
+    Fetch {
+        #[arg(long)]
+        remote: Option<String>,
+        #[arg(long, conflicts_with = "remote")]
+        local_store: Option<String>,
+        #[arg(long)]
+        id: Option<lore_core::MappingId>,
+    },
+    /// Manage filesystem mapping stores independently of code repositories.
+    Store {
+        #[command(subcommand)]
+        command: store_commands::StoreOperation,
     },
     Server {
         #[command(subcommand)]
@@ -97,15 +120,20 @@ enum Operation {
         remote: Option<String>,
         #[arg(long, global = true, conflicts_with = "remote")]
         store: Option<lore_core::MappingStoreId>,
+        #[arg(long, global = true, conflicts_with_all = ["remote", "store"])]
+        local_store: Option<String>,
         #[command(subcommand)]
         command: mapping_commands::MapOperation,
     },
     /// Initialize knowledge outside this Git checkout.
     Init {
-        #[arg(long)]
+        /// Override the immutable revision cache location; does not select a shared mapping store.
+        #[arg(long = "cache-dir", alias = "store")]
         store: Option<PathBuf>,
         #[arg(long)]
         repository_id: Option<String>,
+        #[arg(long)]
+        local_store: Option<String>,
     },
     Status,
     Create {
@@ -222,6 +250,7 @@ fn execute(cli: &Cli) -> Result<Value> {
     let data_home = home()?;
     match &cli.command {
         Operation::Server { command } => return server_commands::execute(command),
+        Operation::Store { command } => return store_commands::execute(&data_home, command),
         Operation::Remote { command } => {
             return remote_commands::execute(&data_home, &cli.repo, command);
         }
@@ -235,13 +264,15 @@ fn execute(cli: &Cli) -> Result<Value> {
     if let Operation::Init {
         store,
         repository_id,
+        local_store,
     } = &cli.command
     {
-        let workspace = Workspace::init(
+        let workspace = Workspace::init_with_local_store(
             &data_home,
             &cli.repo,
             store.as_deref(),
             repository_id.clone(),
+            local_store.as_deref(),
         )?;
         return Ok(json!({"state_path":workspace.state_path,"workspace":workspace.state()?}));
     }
@@ -251,6 +282,16 @@ fn execute(cli: &Cli) -> Result<Value> {
     } = &cli.command
     {
         workspace.with_mapping_store(store.clone())
+    } else if let Operation::Map {
+        local_store: Some(name),
+        ..
+    } = &cli.command
+    {
+        workspace.with_mapping_store(
+            lore_local::LocalStoreRegistry::new(&data_home)
+                .get(name)?
+                .store,
+        )
     } else if let Operation::Map {
         remote: Some(name), ..
     } = &cli.command
@@ -264,20 +305,43 @@ fn execute(cli: &Cli) -> Result<Value> {
         Operation::Push {
             remote,
             id,
+            local_store,
             from_remote,
-        } => sync_commands::push(&workspace, &data_home, remote, id, from_remote.as_deref()),
+            from_local_store,
+        } => sync_commands::push(
+            &workspace,
+            &data_home,
+            id,
+            remote.as_deref(),
+            local_store.as_deref(),
+            from_remote.as_deref(),
+            from_local_store.as_deref(),
+        ),
         Operation::Pull {
             remote,
+            local_store,
             id,
             path,
             backend,
         } => sync_commands::pull(
             &workspace,
             &data_home,
-            remote,
+            remote.as_deref(),
+            local_store.as_deref(),
             id.as_ref(),
             path.as_ref(),
             backend.as_deref(),
+        ),
+        Operation::Fetch {
+            remote,
+            local_store,
+            id,
+        } => sync_commands::fetch(
+            &workspace,
+            &data_home,
+            remote.as_deref(),
+            local_store.as_deref(),
+            id.as_ref(),
         ),
         Operation::Context { command } => {
             context_commands::execute(&workspace, &data_home, command)
@@ -288,11 +352,12 @@ fn execute(cli: &Cli) -> Result<Value> {
         | Operation::Remote { .. } => {
             unreachable!()
         }
-        Operation::Server { .. } => unreachable!(),
+        Operation::Server { .. } | Operation::Store { .. } => unreachable!(),
         Operation::Map {
             command,
             remote,
             store,
+            local_store,
         } => {
             if let mapping_commands::MapOperation::ResolveConflict {
                 id,
@@ -301,14 +366,21 @@ fn execute(cli: &Cli) -> Result<Value> {
                 take,
             } = command
             {
-                let name = remote
-                    .as_deref()
-                    .ok_or_else(|| Error::invalid("Conflict resolution requires --remote"))?;
-                let client = sync_commands::client(&data_home, name)?;
+                if store.is_some() {
+                    return Err(Error::invalid(
+                        "Conflict resolution requires a store connection, rather than --store",
+                    ));
+                }
+                let target = sync_commands::select(
+                    &workspace,
+                    &data_home,
+                    remote.as_deref(),
+                    local_store.as_deref(),
+                )?;
                 return Ok(serde_json::to_value(workspace.resolve_mapping_conflict(
-                    &client,
+                    target.client.as_ref(),
                     &lore_core::SharedMappingKey {
-                        store: client.connection.store.clone(),
+                        store: target.store,
                         mapping: id.clone(),
                     },
                     if_match,
@@ -324,7 +396,7 @@ fn execute(cli: &Cli) -> Result<Value> {
                     actor,
                 )?)?);
             }
-            if remote.is_some()
+            if (remote.is_some() || local_store.is_some())
                 && matches!(
                     command,
                     mapping_commands::MapOperation::Catalog { .. }
@@ -339,14 +411,20 @@ fn execute(cli: &Cli) -> Result<Value> {
                 id,
                 max_age_seconds,
             } = command
-                && let Some(name) = remote
+                && (remote.is_some() || local_store.is_some())
             {
                 if max_age_seconds.is_some() {
                     return Err(Error::invalid(
                         "--max-age-seconds is supported only by the legacy catalog; remote fetch refreshes explicitly",
                     ));
                 }
-                return sync_commands::fetch(&workspace, &data_home, name, id.as_ref());
+                return sync_commands::fetch(
+                    &workspace,
+                    &data_home,
+                    remote.as_deref(),
+                    local_store.as_deref(),
+                    id.as_ref(),
+                );
             }
             if store.is_some()
                 && matches!(

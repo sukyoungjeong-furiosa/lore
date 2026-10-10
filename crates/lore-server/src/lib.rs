@@ -1,5 +1,4 @@
-mod storage;
-pub use storage::{FileSharedStore, SharedStore};
+pub use lore_store::{FileSharedStore, SharedStore};
 
 use axum::{
     Json, Router,

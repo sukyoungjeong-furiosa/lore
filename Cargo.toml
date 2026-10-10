@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/lore", "crates/lore-core", "crates/lore-local", "crates/lore-notion", "crates/lore-resolver", "crates/lore-server"]
+members = ["crates/lore", "crates/lore-core", "crates/lore-local", "crates/lore-notion", "crates/lore-resolver", "crates/lore-server", "crates/lore-store"]
 resolver = "3"
 
 [workspace.package]

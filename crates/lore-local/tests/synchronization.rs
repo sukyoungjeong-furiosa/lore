@@ -23,7 +23,7 @@ impl LocalRemote {
     }
 }
 
-impl MappingRemote for LocalRemote {
+impl MappingStoreClient for LocalRemote {
     fn descriptor(&self) -> Result<MappingStoreDescriptor> {
         match self.execute(StoreRequest::Describe {
             store: self.store.clone(),

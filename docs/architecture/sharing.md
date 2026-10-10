@@ -4,12 +4,15 @@ Lore shares code relationships through mapping stores. A [Lore remote](overview.
 
 The shared space defines which code and knowledge can be connected. A workspace determines what is relevant to its current checkout without redefining that shared space.
 
+Sharing between local worktrees uses a filesystem store directly. A server is required for network access, not for store ownership or synchronization. Reconciliation may be unavailable while publication and retrieval continue normally.
+
 ## Relationships
 
 | Relationship | Cardinality | Contract |
 | --- | --- | --- |
 | Lore Server → Mapping Store | 1:N | A logical service can host several stores. Store identity survives endpoint and deployment changes. |
 | Lore Remote → Mapping Store | N:1 | Each remote selects one store. Its local alias and endpoint do not define store identity. |
+| Local Store Connection → Mapping Store | N:1 | A filesystem location selects a persistent store identity; moving the store requires reconnecting, not changing its identity. |
 | Mapping Store → Repository / Backend Registration | 1:N each | A store defines its shared resource set. Registrations contain no personal credentials. |
 | Mapping Store ↔ Code Repository | N:M | Teams can maintain independent mappings for the same repository. |
 | Mapping Store ↔ Document Backend | N:M | Stores reference selected document spaces; neither owns the other. |
@@ -37,10 +40,13 @@ Documents may have no mappings; stores may have no registrations and workspaces 
 
 ## Working Experience
 
-- Discovery combines selected Lore remotes while retaining provenance. Users need not choose a store for every read.
+- Discovery combines selected local stores and Lore remotes while retaining provenance. Users need not choose a store for every read. Local discovery reads published state without requiring Pull.
+- Initialization can create or reuse a default personal store across repositories and inherit a repository's selection in new worktrees. It does not publish pending changes or activate another workspace's mappings.
+- Local initialization registers the selected code repository. An explicit local publication registers the repository and backend references in its proposal; network publication remains subject to server registrations and permissions.
 - Creating a shared mapping uses a configured writable destination. An ambiguous destination is selected explicitly rather than guessed.
 - Fetch and Pull may select multiple Lore remotes. Push targets one mapping in one store. A failed connection does not hide successful results or imply complete discovery.
 - Local changes and projections remain workspace-specific. Connecting another store does not redirect existing changes, baselines, or caches.
+- Direct local access uses filesystem permissions. It does not inherit network credentials or bypass server authorization for remote access.
 - Lore remote settings may be reused across checkouts without sharing working changes or projections. Backend and model connections can be reused independently.
 
 ## Server
