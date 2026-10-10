@@ -22,7 +22,7 @@ code state, independently of the document backend. Server reconciliation is defi
 ## Reuse
 
 - Results may be computed on demand and reused across code changes.
-- Reused results retain their code context and uncertainty. Reuse alone does not establish applicability to a different code state.
+- Reused results retain their anchor, target code context, resolver configuration, and uncertainty. Reuse alone does not establish applicability to a different code state.
 
 ## Resolvers
 
@@ -30,3 +30,7 @@ code state, independently of the document backend. Server reconciliation is defi
 - Results report corresponding locations and uncertainty, with explanations when available.
 - Resolver failures must not be reported as established absence of corresponding code.
 - Agent choice, reasoning strategy, and prompts are not prescribed.
+- Model connections configure endpoints and authentication; resolver profiles select a model connection, model, prompt, and request limits.
+- Credentials belong to the execution environment and are not synchronized with mappings. Client and server credentials are configured independently.
+- Model-proposed correspondence remains distinguishable from established correspondence. Valid paths and line ranges alone do not establish a semantic relationship.
+- Results based on captured code retain that context. Changes during resolution must not cause the result to be presented against a different code state.

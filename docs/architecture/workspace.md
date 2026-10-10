@@ -11,11 +11,11 @@ A workspace provides a working context for mappings and knowledge discovery. It 
 
 ## Knowledge Availability
 
-- A workspace need not hold every mapping or document from a source. Shared mappings can be discovered without activating them locally.
+- A workspace need not hold every mapping from a selected store or every document from a connected backend. Shared mappings can be discovered without activating them locally.
 - File or directory installation selects mappings associated with the requested code scope, accounting for known code projections.
 - Installation makes complete mapping revisions available, including their document references and anchors. It does not require fetching document content.
 - Documents can be accessed on demand through their owning backend. Discovery distinguishes recorded mappings from unrecorded suggestions.
-- Discovery results do not imply complete coverage of a code repository or knowledge backend.
+- Discovery results do not imply complete coverage of a code repository or document backend.
 
 ## Local Changes
 
@@ -32,6 +32,6 @@ A [code projection](code-projection.md) describes how a recorded anchor correspo
 
 ## Offline Operation
 
-- Available mappings and cached documents can be read and navigated without a connection. Cached content retains its observed document state.
+- Available mappings and cached documents can be read and navigated without server or backend access. Cached content retains its observed document state.
 - Local mapping changes remain available for later synchronization. Offline document editing depends on the owning backend's capabilities.
 - Unavailable documents remain identifiable; failed retrieval does not prevent work on available mappings and knowledge.

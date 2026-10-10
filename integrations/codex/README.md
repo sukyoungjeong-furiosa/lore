@@ -6,7 +6,7 @@ Optional command hooks for preparing Lore workspaces and introducing related doc
 2. Merge its SessionStart and PostToolUse entries into your host's hook configuration, then review and enable them through `/hooks` in a host supporting command hooks.
 3. Optionally install the replaceable [Korean example skill](../../examples/skills/lore-ko/SKILL.md) using your agent's skill installation mechanism.
 
-`LORE_EXECUTABLE` selects the CLI; `LORE_HOME` selects its data store. Backend connections and credentials are shared with the CLI and editor using that home. Saved tokens are plaintext files with owner-only Unix permissions; a configured token environment variable takes precedence.
+`LORE_EXECUTABLE` selects the CLI; `LORE_HOME` selects its local data directory. Document backend connections and credentials are shared with the CLI and editor using that home. Saved tokens are plaintext files with owner-only Unix permissions; a configured token environment variable takes precedence.
 
 SessionStart prepares the workspace and schedules mapping and title refresh. PostToolUse inspects path mentions and introduces cached references without reading document bodies or projecting code. `LORE_CODEX_REFRESH=0` disables automatic backend refresh. Deduplication requires a stable session identity and is best-effort after interruptions.
 

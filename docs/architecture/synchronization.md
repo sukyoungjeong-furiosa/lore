@@ -1,6 +1,6 @@
 # Synchronization
 
-Synchronization exchanges Lore-managed mapping revisions between a workspace and a shared source through Fetch, Pull, and Push.
+Synchronization exchanges Lore-managed mapping revisions between a workspace and a selected [mapping store](sharing.md) through Fetch, Pull, and Push. Baselines and publication targets retain their store identity.
 
 Published mapping revisions are immutable; updates create new revisions. External document changes follow their owning backend's contract. These operations do not synchronize document content.
 
@@ -19,14 +19,14 @@ Published mapping revisions are immutable; updates create new revisions. Externa
 
 - Push captures and publishes one mapping's recorded workspace state, including its document reference, anchors, and explanatory context. Unrecorded client edits are excluded.
 - Publication requires the shared revision to match the workspace's baseline, or the identity to be unused for a new mapping.
-- Conflicts preserve local changes. Successful publication identifies the final published revision, including any reconciled code references.
+- Conflicts preserve local changes. Successful publication identifies the final published revision and whether reconciliation is pending; publication does not wait for model inference.
 - Document retrieval failure alone does not prevent publication of a mapping that retains its document reference.
 
 ## Server Reconciliation
 
-- The server attempts to reconcile submitted anchors with the configured canonical ref for their code repository, such as `upstream/master`.
-- Reconciliation uses [code projection](code-projection.md). Confirmed correspondence is recorded against the canonical code revision while preserving the submitted reference.
-- If correspondence cannot be established, the original reference is published with explicit uncertainty.
+- The server attempts to reconcile submitted anchors with the canonical ref configured for the mapping store and code repository, such as `upstream/master`.
+- Reconciliation uses [code projection](code-projection.md). Correspondence is recorded separately against the published mapping revision and canonical code revision while preserving the submitted reference.
+- If correspondence cannot be established, the published reference remains available with explicit uncertainty. Reconciliation does not rewrite a published revision.
 - Reconciliation does not modify the referenced document or establish human confirmation of the mapping.
 
 ## Scope and Failure

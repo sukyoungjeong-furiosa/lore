@@ -4,7 +4,7 @@ Lore models documents, their metadata and links, and persistent mappings to code
 
 ## Document
 
-A document is knowledge with a stable identity, a title, and content owned by a knowledge backend.
+A document is knowledge with a stable identity, a title, and content owned by a document backend.
 
 - A document reference identifies its backend and its identity within that backend. Titles need not be unique; titles and access credentials are not document identities.
 - Renaming or relocating a document within its backend does not change its reference. Copying it to another backend does not implicitly preserve identity.
@@ -37,7 +37,7 @@ Links connect documents using conventions supported by their content format and 
 
 ## Mapping
 
-A mapping has a stable identity, a document reference, one or more code anchors or path scopes, and optional explanatory context.
+A mapping has a stable identity within its mapping store, one document reference, one or more code anchors or path scopes in one code repository, and optional explanatory context.
 
 - A document can have zero or more mappings. Creating or editing a mapping does not modify its document.
 - Lore preserves mapping revision history. Mapping authorship and any human confirmation remain distinct from document authorship.
@@ -49,7 +49,7 @@ A mapping has a stable identity, a document reference, one or more code anchors 
 
 An anchor records a code repository, revision or captured working state, and location.
 
-- Different anchors may refer to different files, repositories, or code states.
+- Anchors within a mapping may refer to different files or code states in the same repository. The same document can have separate mappings for other repositories.
 - Projection preserves the original reference without modifying documents or code.
 - Finding a corresponding location does not establish the validity of the explanation or extend human confirmation to changed code or document content.
 
