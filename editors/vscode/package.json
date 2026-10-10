@@ -140,6 +140,18 @@
         "title": "Lore: Document History",
         "icon": "$(history)",
         "enablement": "lore.readerIsLocalDocument && !lore.readerBusy"
+      },
+      {
+        "command": "lore.configureResolver",
+        "title": "Lore: Configure Resolver"
+      },
+      {
+        "command": "lore.selectResolver",
+        "title": "Lore: Select Resolver"
+      },
+      {
+        "command": "lore.setResolverToken",
+        "title": "Lore: Set Model Connection Token"
       }
     ],
     "viewsContainers": {

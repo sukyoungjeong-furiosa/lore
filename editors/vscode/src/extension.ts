@@ -8,6 +8,7 @@ import { DocumentSurface, SelectedDocument } from './document-surface';
 import { Knowledge, KnowledgeEntry } from './knowledge';
 import { KnowledgeView } from './knowledge-view';
 import { Mappings, MappingEntry } from './mappings';
+import { registerResolverCommands } from './resolver';
 type Root = vscode.WorkspaceFolder;
 interface Entry { label: string; root: Root; view?: View; children?: Entry[]; error?: string }
 class Documents implements vscode.TreeDataProvider<Entry>, vscode.Disposable {
@@ -128,7 +129,7 @@ export function activate(context: vscode.ExtensionContext) {
     const configs = await call<Record<string, BackendConfiguration>>(root, ['backend', 'list']);
     const names = Object.keys(configs);
     if (!names.length) throw new Error('Run Lore: Connect Notion first.');
-    return names.length === 1 ? names[0] : vscode.window.showQuickPick(names, { placeHolder: 'Select a knowledge backend' });
+    return names.length === 1 ? names[0] : vscode.window.showQuickPick(names, { placeHolder: 'Select a document backend' });
   }
   function command(name: string, handler: (...args: any[]) => Promise<unknown> | unknown) {
     context.subscriptions.push(vscode.commands.registerCommand(name, async (...args: unknown[]) => {
@@ -136,9 +137,10 @@ export function activate(context: vscode.ExtensionContext) {
     }));
   }
   command('lore.init', async (path?: string) => { const root = await rootFor(path); await call(root, ['init']); refresh(); });
+  registerResolverCommands(command, rootFor);
   command('lore.connectNotion', async () => {
     const root = await rootFor();
-    const name = await vscode.window.showInputBox({ prompt: 'Connection ID (e.g. notion). Document references use this ID.' }); if (!name) return;
+    const name = await vscode.window.showInputBox({ prompt: 'Document backend ID (e.g. notion). Document references use this ID.' }); if (!name) return;
     const page = await vscode.window.showInputBox({ prompt: 'Root Notion page URL or ID' }); if (!page) return;
     await call(root, ['backend', 'add-notion', name, '--root', page]);
     refresh(); await vscode.commands.executeCommand('lore.setBackendToken', name, root);
