@@ -14,7 +14,7 @@ Lore connects code to documents and preserves those relationships for reuse.
 | Term | Meaning |
 | --- | --- |
 | Document Backend | Owns document content, editing, permissions, and available history. Notion and Lore-owned document storage are examples. `backend` in the CLI means a document backend. |
-| Mapping Store | Owns mappings, their revision history, and shared heads. A logical sharing space, independent of its database or server URL. |
+| Mapping Store | A shared space that registers code repositories and document backends and owns their mappings, revision history, and shared heads. Independent of its database or server URL. |
 | Lore Server | Provides authenticated access to mapping stores, synchronization, and background reconciliation. |
 | Mapping Catalog | A discovery index of mapping references and metadata for a code repository. It does not contain document bodies or replace a mapping store. |
 | Code Repository | The identity and revision history of code, independent of checkout paths and Git remote names. |
@@ -26,12 +26,14 @@ A document backend is a document space, not merely an adapter kind: several back
 
 ## Connections
 
-- **Lore remote:** A named connection to a mapping store through a Lore server. It selects one store, one code repository, and document backends for mapping discovery and synchronization. The remote name is a local alias; the store has its own stable identity.
-- **Backend connection:** Configures access to a document backend, including personal authentication and page discovery settings.
+- **Lore remote:** A named connection to one mapping store through a Lore server. That store may register multiple code repositories and document backends. The remote name is a local alias; the store has its own stable identity.
+- **Backend connection:** Configures personal access to a registered document backend, including authentication and page discovery settings. It may also support standalone document browsing without a Lore remote.
 - **Model connection:** Configures model API access independently of store and backend connections.
 
 Within Lore, **remote** means the mapping-sharing connection; document and model connections are not called remotes. A **Git remote** refers to Git. Several Lore remotes may use the same server, and server replicas or URL changes do not create new store identities.
 
-For example, a `team` remote can share mappings for a repository while a `notion` backend connection reads the referenced documents. Sharing a mapping does not share document credentials or grant document access. A mapping catalog provides discovery metadata; a read-only catalog connection is not a synchronization remote.
+For example, `compiler-team` may connect to a store containing compiler and kernel repositories alongside Notion and Lore-owned document backends. A workspace selects mappings for its current repository; it does not define the remote's full scope. A `personal` remote may connect to a local server and register some of the same resources with independent mappings.
+
+Repository and backend registrations belong to the shared space; the actual code and documents retain their external ownership. Personal credentials remain client settings. Sharing a mapping does not grant document access. A mapping catalog covers one repository's discovery metadata; a read-only catalog connection is not a synchronization remote.
 
 CLI, editor integrations, and MCP are interfaces to these operations. [Sharing](sharing.md) defines the relationships and access contracts.

@@ -8,6 +8,7 @@ use std::{io::Read, path::PathBuf};
 mod backend_commands;
 mod context_commands;
 mod mapping_commands;
+mod remote_commands;
 mod resolver_commands;
 
 #[derive(Parser)]
@@ -42,6 +43,11 @@ impl From<Author> for Actor {
 
 #[derive(Subcommand)]
 enum Operation {
+    /// Configure mapping-sharing connections independently of document backends.
+    Remote {
+        #[command(subcommand)]
+        command: remote_commands::RemoteOperation,
+    },
     /// Configure replaceable model resolvers and user-local model credentials.
     Resolver {
         #[command(subcommand)]
@@ -188,6 +194,7 @@ fn scope(workspace: &Workspace, path: &std::path::Path) -> Result<String> {
 fn execute(cli: &Cli) -> Result<Value> {
     let data_home = home()?;
     match &cli.command {
+        Operation::Remote { command } => return remote_commands::execute(&data_home, command),
         Operation::Resolver { command } => {
             return resolver_commands::configure(&data_home, command);
         }
@@ -214,7 +221,10 @@ fn execute(cli: &Cli) -> Result<Value> {
         Operation::Context { command } => {
             context_commands::execute(&workspace, &data_home, command)
         }
-        Operation::Backend { .. } | Operation::Docs { .. } | Operation::Resolver { .. } => {
+        Operation::Backend { .. }
+        | Operation::Docs { .. }
+        | Operation::Resolver { .. }
+        | Operation::Remote { .. } => {
             unreachable!()
         }
         Operation::Map { command } => {

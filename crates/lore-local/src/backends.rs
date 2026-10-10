@@ -23,6 +23,7 @@ pub enum BackendConfig {
     },
 }
 
+/// Personal document access settings, independent of a store's shared backend registrations.
 pub struct BackendRegistry {
     directory: PathBuf,
 }

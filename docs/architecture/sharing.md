@@ -1,12 +1,16 @@
 # Sharing
 
-Lore shares code relationships through mapping stores. Documents remain with their owning [document backends](overview.md#components-and-terms).
+Lore shares code relationships through mapping stores. A [Lore remote](overview.md#connections) connects a client to one such shared space, containing registrations for multiple code repositories and document backends. Documents remain with their owning backends.
+
+The shared space defines which code and knowledge can be connected. A workspace determines what is relevant to its current checkout without redefining that shared space.
 
 ## Relationships
 
 | Relationship | Cardinality | Contract |
 | --- | --- | --- |
 | Lore Server → Mapping Store | 1:N | A logical service can host several stores. Store identity survives endpoint and deployment changes. |
+| Lore Remote → Mapping Store | N:1 | Each remote selects one store. Its local alias and endpoint do not define store identity. |
+| Mapping Store → Repository / Backend Registration | 1:N each | A store defines its shared resource set. Registrations contain no personal credentials. |
 | Mapping Store ↔ Code Repository | N:M | Teams can maintain independent mappings for the same repository. |
 | Mapping Store ↔ Document Backend | N:M | Stores reference selected document spaces; neither owns the other. |
 | Document Backend → Document | 1:N | A document has one owning backend. Caches do not become owners. |
@@ -18,15 +22,17 @@ Lore shares code relationships through mapping stores. Documents remain with the
 | Anchor → Projection Result | 1:N | Different target states and resolvers can produce different results. |
 | Model Connection → Resolver Profile | 1:N | Profiles can reuse authentication while selecting different models or prompts. |
 
-Documents may have no mappings; stores and workspaces may have no connections. Selecting a store does not select all its repositories or backends.
+Documents may have no mappings; stores may have no registrations and workspaces may have no remotes. Connecting a remote does not require fetching every repository's mappings or every backend's documents.
 
 ## Identity and Scope
 
 - Stores, repositories, and document backends have stable identities independent of URLs, Git remote names, local aliases, and credentials. Backend identities identify document spaces, not adapter kinds or selected root pages.
-- A [Lore remote](overview.md#connections) selects one store, one code repository, and one or more document backends. Discovery includes all accessible mappings in that scope. Document-level selection is not required initially; backend page discovery remains separate.
+- A remote selects a store, not a single repository–backend pair. The store's repository and backend registrations are shared configuration; local filters do not change that configuration.
+- A mapping references one registered repository and one document in a registered backend. The same repository or backend may be registered in several stores, each with independent mappings and repository-specific canonical refs.
+- Workspace discovery uses its current code repository and any selected backend scope within each connected store. It includes accessible mappings in that scope; backend page discovery remains separate. Document-level selection is not required initially.
 - Mapping identity, baselines, and publication targets retain their store identity. Document identity is its backend identity and backend-native document ID. Matching titles or references do not merge independent mappings.
 - Connection settings select knowledge; they do not grant access. The server enforces permitted store, repository, and backend scope. Mapping access does not confer document access.
-- Backend connections use shared identities with personal credentials and local display names. Cached content and authentication remain local to the user's environment.
+- Backend connections bind shared backend identities to personal credentials and local display names. Connecting a remote does not create credentials or replace an existing personal connection. Cached content and authentication remain local to the user's environment.
 
 ## Working Experience
 

@@ -5,6 +5,7 @@ mod model;
 mod projection;
 mod repository;
 mod routing;
+mod sharing;
 mod wiki;
 
 pub use backend::*;
@@ -14,6 +15,7 @@ pub use model::*;
 pub use projection::*;
 pub use repository::*;
 pub use routing::*;
+pub use sharing::*;
 pub use wiki::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]

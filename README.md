@@ -58,6 +58,10 @@ Exact-text correspondence is checked first; otherwise the selected model propose
 
 `lore map catalog set <url>` connects a read-only HTTP mapping catalog; `lore map fetch` retrieves discovery metadata without document bodies. `lore map publish` publishes to the local catalog only. The earlier `map source` command remains an alias.
 
+## Lore Remotes
+
+A Lore remote selects a shared mapping store, which can register multiple code repositories and document backends. Use `lore remote add <name> --url <server-url> --store <store-id>` and `lore remote ls` to record and inspect user-local connection settings across worktrees. These commands do not contact the server or enable discovery or synchronization yet. Document credentials remain separate under `lore backend`.
+
 ## Documentation
 
 - [Architecture](docs/architecture/)
