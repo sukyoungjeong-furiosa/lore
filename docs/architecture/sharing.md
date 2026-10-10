@@ -23,18 +23,18 @@ Documents may have no mappings; stores and workspaces may have no connections. S
 ## Identity and Scope
 
 - Stores, repositories, and document backends have stable identities independent of URLs, Git remote names, local aliases, and credentials. Backend identities identify document spaces, not adapter kinds or selected root pages.
-- A store connection selects one store, one code repository, and one or more document backends. Discovery includes all accessible mappings in that scope. Document-level selection is not required initially; backend page discovery remains separate.
+- A [Lore remote](overview.md#connections) selects one store, one code repository, and one or more document backends. Discovery includes all accessible mappings in that scope. Document-level selection is not required initially; backend page discovery remains separate.
 - Mapping identity, baselines, and publication targets retain their store identity. Document identity is its backend identity and backend-native document ID. Matching titles or references do not merge independent mappings.
 - Connection settings select knowledge; they do not grant access. The server enforces permitted store, repository, and backend scope. Mapping access does not confer document access.
 - Backend connections use shared identities with personal credentials and local display names. Cached content and authentication remain local to the user's environment.
 
 ## Working Experience
 
-- Discovery combines selected store connections while retaining provenance. Users need not choose a store for every read.
+- Discovery combines selected Lore remotes while retaining provenance. Users need not choose a store for every read.
 - Creating a shared mapping uses a configured writable destination. An ambiguous destination is selected explicitly rather than guessed.
-- Fetch and Pull may select multiple store connections. Push targets one mapping in one store. A failed connection does not hide successful results or imply complete discovery.
+- Fetch and Pull may select multiple Lore remotes. Push targets one mapping in one store. A failed connection does not hide successful results or imply complete discovery.
 - Local changes and projections remain workspace-specific. Connecting another store does not redirect existing changes, baselines, or caches.
-- Store connection choices may be reused across checkouts without sharing working changes or projections. Backend and model connections can be reused independently.
+- Lore remote settings may be reused across checkouts without sharing working changes or projections. Backend and model connections can be reused independently.
 
 ## Server
 

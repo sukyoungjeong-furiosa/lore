@@ -26,10 +26,12 @@ A document backend is a document space, not merely an adapter kind: several back
 
 ## Connections
 
-- **Store connection:** Selects a mapping store, code repository, and document backends for discovery and synchronization.
+- **Lore remote:** A named connection to a mapping store through a Lore server. It selects one store, one code repository, and document backends for mapping discovery and synchronization. The remote name is a local alias; the store has its own stable identity.
 - **Backend connection:** Configures access to a document backend, including personal authentication and page discovery settings.
 - **Model connection:** Configures model API access independently of store and backend connections.
 
-Use these qualified names rather than an unqualified “remote” or “source.” A Git remote refers only to Git. Server replicas and URL changes do not create new store identities.
+Within Lore, **remote** means the mapping-sharing connection; document and model connections are not called remotes. A **Git remote** refers to Git. Several Lore remotes may use the same server, and server replicas or URL changes do not create new store identities.
+
+For example, a `team` remote can share mappings for a repository while a `notion` backend connection reads the referenced documents. Sharing a mapping does not share document credentials or grant document access. A mapping catalog provides discovery metadata; a read-only catalog connection is not a synchronization remote.
 
 CLI, editor integrations, and MCP are interfaces to these operations. [Sharing](sharing.md) defines the relationships and access contracts.
