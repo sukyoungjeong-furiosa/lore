@@ -1,5 +1,5 @@
 use clap::Subcommand;
-use lore_core::{MappingStoreDescriptor, MappingStoreId, RepositoryRegistration, Result};
+use lore_core::{KnowledgeStoreDescriptor, KnowledgeStoreId, RepositoryRegistration, Result};
 use lore_server::{PrincipalConfig, ServerConfig, StoreGrant};
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, net::SocketAddr, path::PathBuf};
@@ -9,7 +9,7 @@ pub enum ServerOperation {
     /// Print a starting configuration; edit it to add stores, principals, and narrower grants.
     Config {
         #[arg(long)]
-        store: Option<MappingStoreId>,
+        store: Option<KnowledgeStoreId>,
         #[arg(long, required = true)]
         repository: Vec<String>,
         #[arg(long, required = true)]
@@ -40,7 +40,7 @@ pub fn execute(command: &ServerOperation) -> Result<Value> {
             token_env,
         } => {
             let store = store.clone().unwrap_or_default();
-            let descriptor = MappingStoreDescriptor {
+            let descriptor = KnowledgeStoreDescriptor {
                 id: store.clone(),
                 repositories: repository
                     .iter()

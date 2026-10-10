@@ -108,6 +108,8 @@ def refresh(repo):
             return
         results = []
         operations = [('mappings', ['map', 'fetch', '--max-age-seconds', '300'], 15)]
+        for remote in sorted(set(state.get('connected_remotes', {}).values())):
+            operations.append(('knowledge:' + remote, ['fetch', '--remote', remote], 25))
         for backend in run(repo, 'backend', 'list'):
             operations.append((backend, ['docs', 'fetch', backend, '--max-age-seconds', '900'], 900))
         for source, args, timeout in operations:
@@ -238,7 +240,7 @@ def handle(event, session=None, limit=LIMIT):
     for repo, paths in paths_by_root(event).items():
         state = prepare(repo)
         schedule_refresh(repo, state['repository_id'])
-        args = ['context', 'discover', '--cached']
+        args = ['--central', 'context', 'discover', '--cached']
         if exclusions.exists():
             args.extend(['--exclude-file', str(exclusions)])
         result = run(repo, *args, *sorted(paths))

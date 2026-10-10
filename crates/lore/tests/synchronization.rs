@@ -129,8 +129,8 @@ impl Setup {
     fn new() -> Self {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path();
-        let stores = ["team", "personal"].map(|id| json!({"id":id,"repositories":{"compiler":{"canonical_ref":null},"kernels":{"canonical_ref":null}},"backends":["notion"]}));
-        let grant = |store: &str, repos: &[&str], write: bool| json!({"store":store,"repositories":repos,"backends":["notion"],"write":write});
+        let stores = ["team", "personal"].map(|id| json!({"id":id,"repositories":{"compiler":{"canonical_ref":null},"kernels":{"canonical_ref":null}},"backends":["notion","local"]}));
+        let grant = |store: &str, repos: &[&str], write: bool| json!({"store":store,"repositories":repos,"backends":["notion","local"],"write":write});
         let config = json!({"stores":stores,"principals":[
             {"name":"alice","token_env":"ALICE_TOKEN","grants":[grant("team", &["compiler","kernels"], true),grant("personal", &["compiler"],true)]},
             {"name":"bob","token_env":"BOB_TOKEN","grants":[grant("team", &["compiler"],true)]},
@@ -423,4 +423,229 @@ fn server_restart_preserves_heads_and_read_only_credentials_cannot_publish() {
         first["revision"]
     );
     setup.alice.ok(&["pull", "--remote", "team", "--id", id]);
+}
+
+#[test]
+fn knowledge_proposals_share_between_people_over_http_without_git_remotes() {
+    let setup = Setup::new();
+    let a = &setup.alice;
+    let b = &setup.bob;
+    a.ok(&["pull", "--remote", "team"]);
+    b.ok(&["pull", "--remote", "team"]);
+    let document = a.input(
+        &["create", "Scheduler decision", "--stdin"],
+        Some("Accepted locally"),
+    );
+    let id = document["document"]["id"].as_str().unwrap();
+    let committed = a.ok(&[
+        "commit",
+        id,
+        "--if-match",
+        document["revision"].as_str().unwrap(),
+    ]);
+    a.ok(&["push"]);
+    assert_eq!(b.ok(&["--central", "search"]), json!([]));
+    let unrelated = a.input(
+        &["create", "Private local context", "--stdin"],
+        Some("Unrelated to this team"),
+    );
+    a.ok(&[
+        "commit",
+        unrelated["document"]["id"].as_str().unwrap(),
+        "--if-match",
+        unrelated["revision"].as_str().unwrap(),
+    ]);
+    a.ok(&["push"]);
+    assert!(!a.run(&["push", "--remote", "team"], None).status.success());
+    let submitted = a.ok(&["push", "--remote", "team", "--document", id]);
+    let proposal = submitted["proposal"]["id"].as_str().unwrap();
+    assert_eq!(
+        a.ok(&["push", "--remote", "team", "--document", id])["proposal"]["id"],
+        proposal
+    );
+    assert!(
+        b.ok(&["fetch", "--remote", "team"])["knowledge"]["snapshot"]["documents"]
+            .as_object()
+            .unwrap()
+            .is_empty()
+    );
+    let review = a.ok(&["proposal", "--remote", "team", "show", proposal]);
+    let expected = review["central"]["version"].as_str().unwrap();
+    assert_eq!(
+        review["proposed"]["snapshot"]["documents"]
+            .as_object()
+            .unwrap()
+            .len(),
+        1,
+        "Selected remote submission excludes unrelated local knowledge"
+    );
+    assert_eq!(
+        review["proposed"]["snapshot"]["documents"][id]["document"]["content"],
+        "Accepted locally"
+    );
+    a.connect("readonly", "team", &setup.daemon.url, "test-only-reader");
+    let denied = a.run(
+        &[
+            "proposal",
+            "--remote",
+            "readonly",
+            "integrate",
+            proposal,
+            "--if-match",
+            expected,
+        ],
+        None,
+    );
+    assert!(!denied.status.success());
+    assert!(String::from_utf8_lossy(&denied.stderr).contains("permission_denied"));
+    let accepted = a.ok(&[
+        "proposal",
+        "--remote",
+        "team",
+        "integrate",
+        proposal,
+        "--if-match",
+        expected,
+    ]);
+    assert_eq!(
+        a.ok(&[
+            "proposal",
+            "--remote",
+            "team",
+            "integrate",
+            proposal,
+            "--if-match",
+            expected
+        ]),
+        accepted,
+        "Integration retry returns its original durable result"
+    );
+    assert_eq!(
+        a.ok(&["push", "--remote", "team", "--document", id])["proposal"]["integrated"],
+        accepted["version"]["version"]
+    );
+    assert_eq!(b.ok(&["--central", "search"]), json!([]));
+    b.ok(&["fetch", "--remote", "team"]);
+    assert_eq!(
+        b.ok(&["show", id, "--remote", "team"])["document"]["content"],
+        "Accepted locally"
+    );
+    assert_eq!(
+        b.ok(&["--central", "search"]),
+        json!([]),
+        "Fetch does not incorporate knowledge"
+    );
+    b.ok(&["pull", "--remote", "team"]);
+    assert_eq!(
+        b.ok(&["--central", "show", id])["document"]["content"],
+        "Accepted locally"
+    );
+    assert_eq!(
+        b.ok(&["search"]),
+        json!([]),
+        "Remote Pull advances local central, not every agent branch"
+    );
+    b.ok(&["pull"]);
+    assert_eq!(
+        b.ok(&["show", id])["document"]["content"],
+        "Accepted locally"
+    );
+    a.ok(&["pull", "--remote", "team"]);
+    let bob = b.ok(&["show", id]);
+    let bob = b.input(
+        &[
+            "edit",
+            id,
+            "--if-match",
+            bob["revision"].as_str().unwrap(),
+            "--stdin",
+        ],
+        Some("Bob's conclusion"),
+    );
+    b.ok(&[
+        "commit",
+        id,
+        "--if-match",
+        bob["revision"].as_str().unwrap(),
+    ]);
+    b.ok(&["push"]);
+    let alice = a.input(
+        &[
+            "edit",
+            id,
+            "--if-match",
+            committed["revision"].as_str().unwrap(),
+            "--stdin",
+        ],
+        Some("Alice's conclusion"),
+    );
+    a.ok(&[
+        "commit",
+        id,
+        "--if-match",
+        alice["revision"].as_str().unwrap(),
+    ]);
+    a.ok(&["push"]);
+    let p1 = a.ok(&["push", "--remote", "team", "--document", id]);
+    let p2 = b.ok(&["push", "--remote", "team", "--document", id]);
+    let review = a.ok(&[
+        "proposal",
+        "--remote",
+        "team",
+        "show",
+        p1["proposal"]["id"].as_str().unwrap(),
+    ]);
+    a.ok(&[
+        "proposal",
+        "--remote",
+        "team",
+        "integrate",
+        p1["proposal"]["id"].as_str().unwrap(),
+        "--if-match",
+        review["central"]["version"].as_str().unwrap(),
+    ]);
+    let review = b.ok(&[
+        "proposal",
+        "--remote",
+        "team",
+        "show",
+        p2["proposal"]["id"].as_str().unwrap(),
+    ]);
+    assert_eq!(
+        b.run(
+            &[
+                "proposal",
+                "--remote",
+                "team",
+                "integrate",
+                p2["proposal"]["id"].as_str().unwrap(),
+                "--if-match",
+                review["central"]["version"].as_str().unwrap()
+            ],
+            None
+        )
+        .status
+        .code(),
+        Some(3)
+    );
+    assert_eq!(
+        review["central"]["snapshot"]["documents"][id]["document"]["content"],
+        "Alice's conclusion"
+    );
+    assert_eq!(
+        review["proposed"]["snapshot"]["documents"]
+            .as_object()
+            .unwrap()
+            .len(),
+        1,
+        "Selected remote submission excludes unrelated local knowledge"
+    );
+    assert_eq!(
+        review["proposed"]["snapshot"]["documents"][id]["document"]["content"],
+        "Bob's conclusion"
+    );
+    assert_eq!(
+        b.ok(&["--central", "show", id])["document"]["content"],
+        "Bob's conclusion"
+    );
 }

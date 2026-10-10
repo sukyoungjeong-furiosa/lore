@@ -37,7 +37,7 @@ Links connect documents using conventions supported by their content format and 
 
 ## Mapping
 
-A mapping has a stable identity within its mapping store, one document reference, one or more code anchors or path scopes in one code repository, and optional explanatory context.
+A mapping has a stable identity within its knowledge store, one document reference, one or more code anchors or path scopes in one code repository, and optional explanatory context.
 
 - A document can have zero or more mappings. Creating or editing a mapping does not modify its document.
 - Lore preserves mapping revision history. Mapping authorship and any human confirmation remain distinct from document authorship.

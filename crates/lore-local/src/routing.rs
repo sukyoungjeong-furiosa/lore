@@ -19,11 +19,21 @@ struct RoutingIndex {
 impl Workspace {
     fn routing_documents(&self) -> Result<Vec<RoutingDocument>> {
         let state = self.state()?;
+        let available = self.list(false)?;
+        let committed_mappings = self.list_scoped_mappings(true)?;
         let fingerprint = hash(serde_json::to_vec(&(
             &state.repository_id,
             &state.documents,
             &state.mappings,
             &state.store_mappings,
+            committed_mappings
+                .iter()
+                .map(|v| (&v.view.record.mapping.id, &v.view.revision))
+                .collect::<Vec<_>>(),
+            available
+                .iter()
+                .map(|view| (&view.document.id, &view.revision))
+                .collect::<Vec<_>>(),
         ))?);
         let path = self.state_path.with_file_name("routing-index.json");
         match std::fs::read(&path) {
@@ -62,13 +72,13 @@ impl Workspace {
                 });
             }
         }
-        for (id, active) in state.documents {
-            let document = self.repository.load(&id, &active.revision)?.document;
+        for view in available {
+            let document = view.document;
             if !document.archived {
                 documents.push(RoutingDocument {
                     store: None,
                     mapping: None,
-                    document: LoreDocument::Local { id },
+                    document: LoreDocument::Local { id: document.id },
                     title: Some(document.title),
                     scopes: vec![],
                     anchors: document
@@ -235,6 +245,63 @@ impl Workspace {
                     }
                 }
                 Err(error) => warnings.push(format!("Local store {store}: {}", error.message)),
+            }
+        }
+        for name in state.connected_remotes.values() {
+            if let Some(version) = self.cached_remote_knowledge(home, name)? {
+                let source = RemoteRegistry::new(home).get(name)?.store;
+                for record in version.snapshot.documents.into_values() {
+                    let document = LoreDocument::Local {
+                        id: record.document.id,
+                    };
+                    if !record.document.archived && !excluded.contains(&document) {
+                        documents.push(RoutingDocument {
+                            store: Some(source.clone()),
+                            mapping: None,
+                            document,
+                            title: Some(record.document.title),
+                            scopes: vec![],
+                            anchors: record
+                                .document
+                                .anchors
+                                .into_iter()
+                                .map(|a| AnchorSummary {
+                                    id: a.id,
+                                    path: a.path,
+                                    start: a.start,
+                                    end: a.end,
+                                    context: a.context,
+                                })
+                                .collect(),
+                        });
+                    }
+                }
+                for record in version.snapshot.mappings.into_values() {
+                    let mapping = record.mapping;
+                    let document = LoreDocument::Backend {
+                        reference: mapping.document,
+                    };
+                    if !mapping.archived && !excluded.contains(&document) {
+                        documents.push(RoutingDocument {
+                            store: Some(RemoteRegistry::new(home).get(name)?.store),
+                            mapping: Some(mapping.id),
+                            document,
+                            title: None,
+                            scopes: mapping.scopes,
+                            anchors: mapping
+                                .anchors
+                                .into_iter()
+                                .map(|a| AnchorSummary {
+                                    id: a.id,
+                                    path: a.path,
+                                    start: a.start,
+                                    end: a.end,
+                                    context: a.context,
+                                })
+                                .collect(),
+                        });
+                    }
+                }
             }
         }
         let mut related = discover_lore(&documents, &self.code.repository_id, paths)?;

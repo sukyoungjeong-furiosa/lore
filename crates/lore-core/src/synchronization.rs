@@ -1,6 +1,6 @@
 use crate::{
-    Error, MappingCatalog, MappingId, MappingStoreDescriptor, MappingStoreId, MappingView, Result,
-    RevisionId,
+    Error, KnowledgeStoreDescriptor, KnowledgeStoreId, MappingCatalog, MappingId, MappingView,
+    Result, RevisionId,
 };
 use serde::{Deserialize, Serialize};
 
@@ -9,12 +9,12 @@ pub const MAX_SYNC_BYTES: usize = 16 * 1024 * 1024;
 /// A repository view of the caller's accessible shared registrations and mappings.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct StoreCatalog {
-    pub store: MappingStoreDescriptor,
+    pub store: KnowledgeStoreDescriptor,
     pub catalog: MappingCatalog,
 }
 
 impl StoreCatalog {
-    pub fn validate(&self, store: &MappingStoreId, repository: &str) -> Result<()> {
+    pub fn validate(&self, store: &KnowledgeStoreId, repository: &str) -> Result<()> {
         if self.store.id != *store || self.catalog.repository != repository {
             return Err(Error::invalid(
                 "Shared catalog identity does not match the requested scope",
@@ -27,7 +27,7 @@ impl StoreCatalog {
 /// Complete ancestry, newest first. Captured code is included; document bodies are not.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MappingBundle {
-    pub store: MappingStoreId,
+    pub store: KnowledgeStoreId,
     pub revisions: Vec<MappingView>,
 }
 
@@ -86,7 +86,7 @@ pub enum ReconciliationState {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PublicationReceipt {
-    pub store: MappingStoreId,
+    pub store: KnowledgeStoreId,
     pub operation: String,
     pub mapping: MappingId,
     pub revision: RevisionId,
@@ -95,7 +95,7 @@ pub struct PublicationReceipt {
 
 /// Shared mapping access is independent of document retrieval and local workspace activation.
 pub trait MappingStoreClient {
-    fn descriptor(&self) -> Result<MappingStoreDescriptor>;
+    fn descriptor(&self) -> Result<KnowledgeStoreDescriptor>;
     fn catalog(&self, repository: &str) -> Result<StoreCatalog>;
     fn read(&self, mapping: &MappingId, revision: Option<&RevisionId>) -> Result<MappingBundle>;
     fn publish(&self, request: &PublishMapping) -> Result<PublicationReceipt>;
@@ -105,14 +105,14 @@ pub trait MappingStoreClient {
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum StoreRequest {
     Describe {
-        store: MappingStoreId,
+        store: KnowledgeStoreId,
     },
     Catalog {
-        store: MappingStoreId,
+        store: KnowledgeStoreId,
         repository: String,
     },
     Read {
-        store: MappingStoreId,
+        store: KnowledgeStoreId,
         mapping: MappingId,
         revision: Option<RevisionId>,
     },
@@ -124,8 +124,16 @@ pub enum StoreRequest {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "result", rename_all = "snake_case")]
 pub enum StoreResponse {
-    Descriptor { descriptor: MappingStoreDescriptor },
-    Catalog { catalog: StoreCatalog },
-    Mapping { bundle: MappingBundle },
-    Published { receipt: PublicationReceipt },
+    Descriptor {
+        descriptor: KnowledgeStoreDescriptor,
+    },
+    Catalog {
+        catalog: StoreCatalog,
+    },
+    Mapping {
+        bundle: MappingBundle,
+    },
+    Published {
+        receipt: PublicationReceipt,
+    },
 }

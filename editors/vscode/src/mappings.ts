@@ -48,10 +48,10 @@ export class Mappings implements vscode.TreeDataProvider<MappingEntry>, vscode.D
   private async load(selected: SelectedDocument): Promise<ConnectionsState> {
     if (selected.source.kind === 'backend') {
       const ref = selected.source.reference;
-      const listed = await call<{ mappings: LocatedMapping[] }>(selected.root, ['map', 'ls']);
+      const listed = await call<{ mappings: LocatedMapping[] }>(selected.root, ['--central', 'map', 'ls']);
       return { mappings: listed.mappings.filter(({ view }) => view.record.mapping.document.backend === ref.backend && view.record.mapping.document.id === ref.id) };
     }
-    const args = ['show', selected.source.id]; if (selected.source.revision) args.push('--revision', selected.source.revision);
+    const args = selected.source.working ? ['show',selected.source.id] : ['--central', 'show', selected.source.id]; if (selected.source.revision) args.push('--revision', selected.source.revision);
     return { view: await call<View>(selected.root, args) };
   }
   getTreeItem(entry: MappingEntry): vscode.TreeItem {
@@ -73,14 +73,14 @@ export class Mappings implements vscode.TreeDataProvider<MappingEntry>, vscode.D
       const state = await this.state!;
       let result: MappingEntry[];
       if (selected.source.kind === 'backend') {
-        const located = await Promise.all(state.mappings!.map(({ view, store }) => call<LocatedMapping>(selected.root, ['map', 'resolve', view.record.mapping.id, ...(store ? ['--store', store] : [])])));
+        const located = await Promise.all(state.mappings!.map(({ view, store }) => call<LocatedMapping>(selected.root, ['--central', 'map', 'resolve', view.record.mapping.id, ...(store ? ['--store', store] : [])])));
         result = located.flatMap(({ view, projections, store }) => [
           ...this.entries(selected, view.record.mapping.anchors, projections, view.record.mapping.context, view.record.mapping.id).map(entry => ({ ...entry, store, detail: [entry.detail, store ? `Store: ${store}` : ''].filter(Boolean).join('\n') })),
           ...(view.record.mapping.scopes || []).map(scope => ({ label: scope.glob, description: 'Code scope', detail: [scope.repository, view.record.mapping.context].filter(Boolean).join('\n') }))
         ]);
       } else {
         const view = state.view!;
-        const projections = selected.source.revision ? [] : (await call<{ projections: Projection[] }>(selected.root, ['resolve', selected.source.id])).projections;
+        const projections = selected.source.revision ? [] : (await call<{ projections: Projection[] }>(selected.root, selected.source.working ? ['resolve',selected.source.id] : ['--central','resolve',selected.source.id])).projections;
         result = this.entries(selected, view.document.anchors, projections, '', undefined, !!selected.source.revision);
       }
       if (generation !== this.generation) return this.getChildren();
@@ -105,8 +105,8 @@ export class Mappings implements vscode.TreeDataProvider<MappingEntry>, vscode.D
     if (this.selected !== selected) throw new Error('The selected document changed. Choose its current code connection.');
     if (!entry.mapping && selected.source.kind !== 'local') return;
     const result = entry.mapping
-      ? await call<LocatedMapping>(selected.root, ['map', 'resolve', entry.mapping, ...(entry.store ? ['--store', entry.store] : [])])
-      : await call<{ projections: Projection[] }>(selected.root, ['resolve', selected.source.kind === 'local' ? selected.source.id : '']);
+      ? await call<LocatedMapping>(selected.root, ['--central', 'map', 'resolve', entry.mapping, ...(entry.store ? ['--store', entry.store] : [])])
+      : await call<{ projections: Projection[] }>(selected.root, [...(selected.source.kind==='local' && selected.source.working ? [] : ['--central']), 'resolve', selected.source.kind === 'local' ? selected.source.id : '']);
     const location = result.projections.find(p => p.anchor === entry.anchor)?.locations.find(l => l.path === entry.location!.path && l.start === entry.location!.start && l.end === entry.location!.end);
     if (this.selected !== selected) return;
     if (!location) { this.refresh(); throw new Error('Code correspondence changed. Choose a refreshed code connection.'); }

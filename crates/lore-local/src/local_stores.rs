@@ -11,7 +11,7 @@ use std::{
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LocalStoreConnection {
-    pub store: MappingStoreId,
+    pub store: KnowledgeStoreId,
     pub directory: PathBuf,
 }
 
@@ -30,7 +30,7 @@ fn validate_directory(directory: &Path) -> Result<()> {
 }
 
 impl LocalStoreConnection {
-    fn create(directory: &Path, id: MappingStoreId) -> Result<Self> {
+    fn create(directory: &Path, id: KnowledgeStoreId) -> Result<Self> {
         let directory = absolute(directory)?;
         validate_directory(&directory)?;
         std::fs::create_dir_all(&directory)?;
@@ -43,7 +43,7 @@ impl LocalStoreConnection {
                 "A store already exists here; use lore store add to connect it",
             ));
         }
-        let descriptor = MappingStoreDescriptor {
+        let descriptor = KnowledgeStoreDescriptor {
             id,
             repositories: BTreeMap::new(),
             backends: Default::default(),
@@ -65,7 +65,7 @@ impl LocalStoreConnection {
         })
     }
 
-    pub fn descriptor(&self) -> Result<MappingStoreDescriptor> {
+    pub fn descriptor(&self) -> Result<KnowledgeStoreDescriptor> {
         let descriptor = read_descriptor(&self.directory)?;
         if descriptor.id != self.store {
             return Err(Error::new(
@@ -81,7 +81,7 @@ impl LocalStoreConnection {
         &self,
         repositories: &[String],
         backends: &[String],
-    ) -> Result<MappingStoreDescriptor> {
+    ) -> Result<KnowledgeStoreDescriptor> {
         let lock = descriptor_lock(&self.directory)?;
         lock.lock()?;
         let mut descriptor = self.descriptor()?;
@@ -113,7 +113,7 @@ fn descriptor_lock(directory: &Path) -> Result<std::fs::File> {
         .open(directory.join("descriptor.lock"))?)
 }
 
-fn read_descriptor(directory: &Path) -> Result<MappingStoreDescriptor> {
+fn read_descriptor(directory: &Path) -> Result<KnowledgeStoreDescriptor> {
     let bytes = std::fs::read(directory.join("store.json")).map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
             Error::new(ErrorKind::NotFound, "Local mapping store is unavailable")
@@ -121,7 +121,7 @@ fn read_descriptor(directory: &Path) -> Result<MappingStoreDescriptor> {
             error.into()
         }
     })?;
-    let descriptor: MappingStoreDescriptor = serde_json::from_slice(&bytes)?;
+    let descriptor: KnowledgeStoreDescriptor = serde_json::from_slice(&bytes)?;
     descriptor.validate()?;
     Ok(descriptor)
 }
@@ -201,7 +201,7 @@ impl LocalStoreRegistry {
     }
 
     fn create_connection(&self, path: Option<&Path>) -> Result<LocalStoreConnection> {
-        let id = MappingStoreId::new();
+        let id = KnowledgeStoreId::new();
         let generated = self.home.join("stores").join(id.as_str());
         LocalStoreConnection::create(path.unwrap_or(&generated), id)
     }
@@ -269,7 +269,7 @@ impl LocalMappingClient {
 }
 
 impl MappingStoreClient for LocalMappingClient {
-    fn descriptor(&self) -> Result<MappingStoreDescriptor> {
+    fn descriptor(&self) -> Result<KnowledgeStoreDescriptor> {
         self.connection.descriptor()
     }
 

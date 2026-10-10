@@ -1,5 +1,5 @@
 use clap::Subcommand;
-use lore_core::{Error, MappingStoreId, Result};
+use lore_core::{Error, KnowledgeStoreId, Result};
 use lore_local::{CredentialStore, LoreRemote, RemoteRegistry, Workspace};
 use serde_json::{Value, json};
 use std::path::Path;
@@ -12,7 +12,7 @@ pub enum RemoteOperation {
         #[arg(long)]
         url: String,
         #[arg(long)]
-        store: MappingStoreId,
+        store: KnowledgeStoreId,
         #[arg(long)]
         token_env: Option<String>,
     },

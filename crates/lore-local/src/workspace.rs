@@ -21,6 +21,8 @@ pub struct ActiveDocument {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WorkspaceState {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub knowledge_worktree: Option<crate::KnowledgeWorktree>,
     pub schema_version: u32,
     pub checkout: PathBuf,
     pub repository_id: String,
@@ -31,13 +33,13 @@ pub struct WorkspaceState {
     pub mappings: BTreeMap<lore_core::MappingId, ActiveDocument>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub store_mappings:
-        BTreeMap<lore_core::MappingStoreId, BTreeMap<lore_core::MappingId, ActiveDocument>>,
+        BTreeMap<lore_core::KnowledgeStoreId, BTreeMap<lore_core::MappingId, ActiveDocument>>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub connected_remotes: BTreeMap<lore_core::MappingStoreId, String>,
+    pub connected_remotes: BTreeMap<lore_core::KnowledgeStoreId, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub local_store: Option<crate::LocalStoreConnection>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub connected_local_stores: BTreeMap<lore_core::MappingStoreId, PathBuf>,
+    pub connected_local_stores: BTreeMap<lore_core::KnowledgeStoreId, PathBuf>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -49,11 +51,12 @@ struct CheckoutDefaults {
 }
 
 pub struct Workspace {
+    pub central_view: bool,
     pub state_path: PathBuf,
     pub code: GitRepository,
     pub repository: Box<dyn KnowledgeRepository>,
     pub mapping_repository: Box<dyn lore_core::MappingRepository>,
-    pub mapping_store: Option<lore_core::MappingStoreId>,
+    pub mapping_store: Option<lore_core::KnowledgeStoreId>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -214,6 +217,7 @@ impl Workspace {
         } else {
             let state = WorkspaceState {
                 schema_version: 1,
+                knowledge_worktree: None,
                 checkout: code.root.clone(),
                 repository_id: code.repository_id.clone(),
                 store: directory,
@@ -241,7 +245,9 @@ impl Workspace {
             store: state.store.clone(),
             local_store: state.local_store.clone(),
         };
+        drop(lock);
         let workspace = Self::from_state(state_path, code, state)?;
+        workspace.ensure_knowledge_worktree()?;
         if defaults.is_none() {
             atomic_write(&defaults_path, &serde_json::to_vec(&settings)?)?;
         }
@@ -282,6 +288,7 @@ impl Workspace {
         code.repository_id = state.repository_id;
         Ok(Self {
             state_path,
+            central_view: false,
             code,
             mapping_store: None,
             mapping_repository: Box::new(crate::FileMappingRepository {
@@ -308,14 +315,11 @@ impl Workspace {
 
     pub fn list(&self, include_archived: bool) -> Result<Vec<DocumentView>> {
         let state = self.state()?;
-        let mut found = vec![];
-        for (id, active) in state.documents {
-            let revision = self.repository.load(&id, &active.revision)?;
-            if !include_archived && revision.document.archived {
-                continue;
-            }
-            found.push(DocumentView::new(active.revision, revision));
-        }
+        let mut found: Vec<_> = self
+            .available_documents(&state)?
+            .into_iter()
+            .filter(|view| include_archived || !view.document.archived)
+            .collect();
         found.sort_by(|a, b| {
             a.document
                 .title
@@ -328,12 +332,12 @@ impl Workspace {
 
     pub fn read(&self, id: &DocumentId, revision: Option<&RevisionId>) -> Result<DocumentView> {
         let state = self.state()?;
-        let active = state.documents.get(id).ok_or_else(|| {
-            Error::new(
-                ErrorKind::NotFound,
-                "Document is not active in this workspace",
-            )
-        })?;
+        if self.central_view {
+            return self.read_committed_document(id, revision);
+        }
+        let Some(active) = state.documents.get(id) else {
+            return self.read_committed_document(id, revision);
+        };
         let selected = revision.unwrap_or(&active.revision);
         let revision = self.repository.load(id, selected)?;
         Ok(DocumentView::new(selected.clone(), revision))
@@ -376,6 +380,7 @@ impl Workspace {
     ) -> Result<DocumentView> {
         let _lock = self.lock()?;
         let mut state = self.state()?;
+        self.prepare_document_edit(&mut state, id, expected)?;
         let active = state.documents.get_mut(id).ok_or_else(|| {
             Error::new(
                 ErrorKind::NotFound,

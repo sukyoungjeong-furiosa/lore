@@ -10,7 +10,7 @@ use std::{
 };
 
 struct LocalRemote {
-    store: MappingStoreId,
+    store: KnowledgeStoreId,
     server: Arc<Server>,
     lose_response: Cell<bool>,
     after_publish: RefCell<Option<Box<dyn FnOnce()>>>,
@@ -24,7 +24,7 @@ impl LocalRemote {
 }
 
 impl MappingStoreClient for LocalRemote {
-    fn descriptor(&self) -> Result<MappingStoreDescriptor> {
+    fn descriptor(&self) -> Result<KnowledgeStoreDescriptor> {
         match self.execute(StoreRequest::Describe {
             store: self.store.clone(),
         })? {
@@ -115,7 +115,7 @@ impl Setup {
                 .unwrap()
                 .success()
         );
-        let descriptor = |id: &str| MappingStoreDescriptor {
+        let descriptor = |id: &str| KnowledgeStoreDescriptor {
             id: id.parse().unwrap(),
             repositories: BTreeMap::from([("compiler".into(), RepositoryRegistration::default())]),
             backends: BTreeSet::from(["notion".into()]),

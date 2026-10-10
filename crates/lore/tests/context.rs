@@ -67,6 +67,22 @@ impl Setup {
         self.ok(&["map", "create", "team", page, "--glob", "src/scheduler/**"])
     }
 
+    fn publish_mapping(&self, view: &Value) -> Value {
+        let committed = self.ok(&[
+            "commit",
+            view["record"]["mapping"]["id"].as_str().unwrap(),
+            "--mapping",
+            "--if-match",
+            view["revision"].as_str().unwrap(),
+        ]);
+        self.ok(&["push"]);
+        committed
+    }
+
+    fn shared_scope(&self, page: &str) -> Value {
+        self.publish_mapping(&self.scoped(page))
+    }
+
     fn event(&self, session: &str) -> Value {
         json!({
             "hook_event_name": "PostToolUse", "session_id": session, "cwd": self.repo,
@@ -151,11 +167,18 @@ fn hook_documents(output: Output) -> Vec<Value> {
 #[test]
 fn automatic_introduction_is_once_per_document_and_explicit_access_remains_available() {
     let s = Setup::new();
-    let mapping = s.scoped(PAGE);
-    s.ok(&["map", "create", "team", PAGE, "src/scheduler/plan.rs:2"]);
+    let mapping = s.shared_scope(PAGE);
+    s.publish_mapping(&s.ok(&["map", "create", "team", PAGE, "src/scheduler/plan.rs:2"]));
     let local = s.ok(&["create", "Local design"]);
     let local_id = local["document"]["id"].as_str().unwrap();
-    s.ok(&["attach", local_id, "src/scheduler/plan.rs:2"]);
+    let attached = s.ok(&["attach", local_id, "src/scheduler/plan.rs:2"]);
+    s.ok(&[
+        "commit",
+        local_id,
+        "--if-match",
+        attached["revision"].as_str().unwrap(),
+    ]);
+    s.ok(&["push"]);
     let first = hook_documents(s.hook(&s.event("session-a")));
     assert_eq!(first.len(), 2);
     let backend = first
@@ -209,7 +232,7 @@ fn automatic_introduction_is_once_per_document_and_explicit_access_remains_avail
 #[test]
 fn explicit_session_identity_supports_hosts_without_a_session_id() {
     let s = Setup::new();
-    s.scoped(PAGE);
+    s.shared_scope(PAGE);
     let mut event = s.event("unused");
     event.as_object_mut().unwrap().remove("session_id");
     assert!(!s.hook(&event).status.success());
@@ -227,7 +250,7 @@ fn explicit_session_identity_supports_hosts_without_a_session_id() {
 #[test]
 fn concurrent_introductions_and_limits_do_not_claim_unsent_documents() {
     let s = Setup::new();
-    s.scoped(PAGE);
+    s.shared_scope(PAGE);
     let children: Vec<_> = (0..4)
         .map(|_| s.start_hook(&s.event("race"), &[]))
         .collect();
@@ -237,7 +260,7 @@ fn concurrent_introductions_and_limits_do_not_claim_unsent_documents() {
         .sum();
     assert_eq!(total, 1);
     for n in 2..=5 {
-        s.scoped(&format!("00000000-0000-4000-8000-{n:012}"));
+        s.shared_scope(&format!("00000000-0000-4000-8000-{n:012}"));
     }
     for expected in [2, 2, 1, 0] {
         assert_eq!(
@@ -262,14 +285,14 @@ fn byte_budget_does_not_mark_omitted_documents_as_introduced() {
     let glob = format!("{directory}/**");
     let path = format!("{directory}/plan.rs");
     for index in 1..=8 {
-        s.ok(&[
+        s.publish_mapping(&s.ok(&[
             "map",
             "create",
             "team",
             &format!("00000000-0000-4000-8000-{index:012}"),
             "--glob",
             &glob,
-        ]);
+        ]));
     }
     let mut introduced = std::collections::BTreeSet::new();
     for _ in 0..8 {
@@ -292,10 +315,10 @@ fn byte_budget_does_not_mark_omitted_documents_as_introduced() {
 #[test]
 fn scope_installation_is_worktree_specific_but_session_deduplication_is_shared() {
     let s = Setup::new();
-    s.scoped(PAGE);
     let peer = s.temp.path().join("peer");
     s.git(&["worktree", "add", "-qb", "peer", peer.to_str().unwrap()]);
     parse(s.command(&peer, &["init"]).output().unwrap());
+    s.shared_scope(PAGE);
     assert!(
         parse(
             s.command(&peer, &["context", "discover", "src/scheduler/plan.rs"])
@@ -347,7 +370,7 @@ fn scope_installation_is_worktree_specific_but_session_deduplication_is_shared()
 #[test]
 fn hook_uses_path_mentions_and_separates_agent_threads_without_parsing_commands() {
     let s = Setup::new();
-    s.scoped(PAGE);
+    s.shared_scope(PAGE);
     let mut event = s.event("paths");
     event["tool_input"] = json!({"file_path": "src/scheduler/a file.rs"});
     assert_eq!(hook_documents(s.hook(&event)).len(), 1);
@@ -377,7 +400,7 @@ fn hook_uses_path_mentions_and_separates_agent_threads_without_parsing_commands(
 #[test]
 fn routing_refreshes_on_archive_and_invalid_globs_do_not_change_workspace_state() {
     let s = Setup::new();
-    let mapping = s.scoped(PAGE);
+    let mapping = s.shared_scope(PAGE);
     assert_eq!(
         s.ok(&["map", "ls", "src/scheduler/plan.rs"])["mappings"]
             .as_array()

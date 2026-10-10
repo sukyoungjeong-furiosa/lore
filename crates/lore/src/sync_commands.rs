@@ -1,4 +1,4 @@
-use lore_core::{Error, ErrorKind, MappingId, MappingStoreClient, MappingStoreId, Result};
+use lore_core::{Error, ErrorKind, KnowledgeStoreId, MappingId, MappingStoreClient, Result};
 use lore_local::{
     HttpMappingRemote, LocalMappingClient, LocalStoreConnection, LocalStoreRegistry, LoreRemote,
     RemoteCatalogCache, RemoteRegistry, Workspace,
@@ -19,7 +19,7 @@ enum Connection {
 }
 
 pub struct SelectedStore {
-    pub store: MappingStoreId,
+    pub store: KnowledgeStoreId,
     pub client: Box<dyn MappingStoreClient>,
     connection: Connection,
 }

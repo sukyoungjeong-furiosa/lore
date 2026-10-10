@@ -1,8 +1,8 @@
 use lore_core::*;
 use std::collections::{BTreeMap, BTreeSet};
 
-fn store(id: &str) -> MappingStoreDescriptor {
-    MappingStoreDescriptor {
+fn store(id: &str) -> KnowledgeStoreDescriptor {
+    KnowledgeStoreDescriptor {
         id: id.parse().unwrap(),
         repositories: BTreeMap::from([
             (
@@ -126,16 +126,16 @@ fn catalogs_are_repository_views_of_a_store_and_reject_unregistered_backends() {
 
 #[test]
 fn shared_configuration_allows_empty_registrations_and_rejects_credential_fields() {
-    let empty = MappingStoreDescriptor {
+    let empty = KnowledgeStoreDescriptor {
         id: "empty".parse().unwrap(),
         repositories: BTreeMap::new(),
         backends: BTreeSet::new(),
     };
     empty.validate().unwrap();
-    assert!(" \n".parse::<MappingStoreId>().is_err());
+    assert!(" \n".parse::<KnowledgeStoreId>().is_err());
     let mut value = serde_json::to_value(store("team-store")).unwrap();
     value["token"] = serde_json::json!("should-not-be-shared");
-    assert!(serde_json::from_value::<MappingStoreDescriptor>(value).is_err());
+    assert!(serde_json::from_value::<KnowledgeStoreDescriptor>(value).is_err());
     let mut invalid = store("team-store");
     invalid
         .repositories

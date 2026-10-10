@@ -19,7 +19,7 @@ use std::{
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StoreGrant {
-    pub store: MappingStoreId,
+    pub store: KnowledgeStoreId,
     pub repositories: BTreeSet<String>,
     pub backends: BTreeSet<String>,
     #[serde(default)]
@@ -37,7 +37,7 @@ pub struct PrincipalConfig {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ServerConfig {
-    pub stores: Vec<MappingStoreDescriptor>,
+    pub stores: Vec<KnowledgeStoreDescriptor>,
     pub principals: Vec<PrincipalConfig>,
 }
 
@@ -47,7 +47,8 @@ struct Principal {
 }
 
 pub struct Server {
-    stores: BTreeMap<MappingStoreId, MappingStoreDescriptor>,
+    knowledge_storage: Option<Arc<dyn KnowledgeStorage>>,
+    stores: BTreeMap<KnowledgeStoreId, KnowledgeStoreDescriptor>,
     principals: Vec<Principal>,
     storage: Arc<dyn SharedStore>,
 }
@@ -118,17 +119,174 @@ impl Server {
             ));
         }
         Ok(Self {
+            knowledge_storage: None,
             stores,
             principals,
             storage,
         })
     }
 
+    pub fn with_knowledge_storage(mut self, storage: Arc<dyn KnowledgeStorage>) -> Self {
+        self.knowledge_storage = Some(storage);
+        self
+    }
+
+    pub fn execute_knowledge(
+        &self,
+        token: &str,
+        request: KnowledgeRequest,
+    ) -> Result<KnowledgeResponse> {
+        let principal = &self
+            .principals
+            .iter()
+            .find(|p| p.token == token)
+            .ok_or_else(denied)?
+            .config;
+        let (store, repository) = match &request {
+            KnowledgeRequest::Read {
+                store, repository, ..
+            }
+            | KnowledgeRequest::Submit {
+                store, repository, ..
+            }
+            | KnowledgeRequest::Proposals { store, repository }
+            | KnowledgeRequest::Integrate {
+                store, repository, ..
+            } => (store.clone(), repository.clone()),
+        };
+        let descriptor = self.descriptor(principal, &store)?;
+        if !descriptor.repositories.contains_key(&repository) {
+            return Err(denied());
+        }
+        // Local Documents are a separate backend permission; mapping permissions retain backend pairing.
+        let filter = |snapshot: &KnowledgeSnapshot| {
+            let mut selected = snapshot.clone();
+            if !Self::allows(principal, &store, &repository, "local", false) {
+                selected.documents.clear();
+            }
+            selected.mappings.retain(|_, r| {
+                Self::allows(
+                    principal,
+                    &store,
+                    &repository,
+                    &r.mapping.document.backend,
+                    false,
+                )
+            });
+            selected
+        };
+        let storage = self
+            .knowledge_storage
+            .as_ref()
+            .ok_or_else(|| {
+                Error::new(
+                    ErrorKind::Unsupported,
+                    "Versioned knowledge storage is not configured",
+                )
+            })?
+            .open(&store, &repository)?;
+        match request {
+            KnowledgeRequest::Read { version, .. } => {
+                let mut version = storage.read_version(version.as_deref().unwrap_or("main"))?;
+                version.snapshot = filter(&version.snapshot);
+                Ok(KnowledgeResponse::Version { version })
+            }
+            KnowledgeRequest::Proposals { .. } => Ok(KnowledgeResponse::Proposals {
+                proposals: storage.proposals()?,
+            }),
+            KnowledgeRequest::Submit {
+                operation_id,
+                base,
+                snapshot,
+                ..
+            } => {
+                snapshot.validate(&repository)?;
+                let base_version = storage.read_version(&base)?;
+                let mut combined = base_version.snapshot.clone();
+                let visible_base = filter(&base_version.snapshot);
+                let changed = merge_knowledge(&visible_base, &visible_base, &snapshot)?;
+                if changed.documents != visible_base.documents
+                    && !Self::allows(principal, &store, &repository, "local", true)
+                {
+                    return Err(denied());
+                }
+                for (id, record) in &changed.mappings {
+                    if base_version.snapshot.mappings.get(id) != Some(record) {
+                        Self::mapping_access(principal, &store, &record.mapping, true)?;
+                        if let Some(old) = base_version.snapshot.mappings.get(id) {
+                            Self::mapping_access(principal, &store, &old.mapping, true)?;
+                        }
+                    }
+                }
+                for id in visible_base
+                    .mappings
+                    .keys()
+                    .filter(|id| !changed.mappings.contains_key(*id))
+                {
+                    Self::mapping_access(
+                        principal,
+                        &store,
+                        &visible_base.mappings[id].mapping,
+                        true,
+                    )?;
+                }
+                if Self::allows(principal, &store, &repository, "local", false) {
+                    combined.documents = changed.documents;
+                } else if !changed.documents.is_empty() {
+                    return Err(denied());
+                }
+                combined
+                    .mappings
+                    .retain(|id, _| !visible_base.mappings.contains_key(id));
+                combined.mappings.extend(changed.mappings);
+                Ok(KnowledgeResponse::Proposal {
+                    proposal: storage.submit(
+                        &format!("{}:{operation_id}", principal.name),
+                        &base,
+                        &combined,
+                    )?,
+                })
+            }
+            KnowledgeRequest::Integrate {
+                proposal, if_match, ..
+            } => {
+                let proposed = storage
+                    .proposals()?
+                    .into_iter()
+                    .find(|p| p.id == proposal)
+                    .ok_or_else(|| Error::new(ErrorKind::NotFound, "Proposal does not exist"))?;
+                let base = storage.read_version(&proposed.base)?.snapshot;
+                let next = storage.read_version(&proposed.head)?.snapshot;
+                if base.documents != next.documents
+                    && !Self::allows(principal, &store, &repository, "local", true)
+                {
+                    return Err(denied());
+                }
+                for (id, record) in &next.mappings {
+                    if base.mappings.get(id) != Some(record) {
+                        Self::mapping_access(principal, &store, &record.mapping, true)?;
+                        if let Some(previous) = base.mappings.get(id) {
+                            Self::mapping_access(principal, &store, &previous.mapping, true)?;
+                        }
+                    }
+                }
+                for (id, record) in &base.mappings {
+                    if !next.mappings.contains_key(id) {
+                        Self::mapping_access(principal, &store, &record.mapping, true)?;
+                    }
+                }
+                let mut version = storage.integrate(&proposal, &if_match)?;
+                version.snapshot = filter(&version.snapshot);
+                Ok(KnowledgeResponse::Version { version })
+            }
+        }
+    }
+
     fn descriptor(
         &self,
         principal: &PrincipalConfig,
-        store: &MappingStoreId,
-    ) -> Result<MappingStoreDescriptor> {
+        store: &KnowledgeStoreId,
+    ) -> Result<KnowledgeStoreDescriptor> {
         let descriptor = self.stores.get(store).ok_or_else(denied)?;
         let grants: Vec<_> = principal
             .grants
@@ -138,7 +296,7 @@ impl Server {
         if grants.is_empty() {
             return Err(denied());
         }
-        Ok(MappingStoreDescriptor {
+        Ok(KnowledgeStoreDescriptor {
             id: store.clone(),
             repositories: descriptor
                 .repositories
@@ -157,7 +315,7 @@ impl Server {
 
     fn allows(
         principal: &PrincipalConfig,
-        store: &MappingStoreId,
+        store: &KnowledgeStoreId,
         repository: &str,
         backend: &str,
         write: bool,
@@ -172,7 +330,7 @@ impl Server {
 
     fn mapping_access(
         principal: &PrincipalConfig,
-        store: &MappingStoreId,
+        store: &KnowledgeStoreId,
         mapping: &Mapping,
         write: bool,
     ) -> Result<()> {
@@ -317,22 +475,54 @@ async fn handle(
         .map_err(HttpError)
 }
 
+async fn handle_knowledge(
+    State(server): State<Arc<Server>>,
+    headers: HeaderMap,
+    request: std::result::Result<Json<KnowledgeRequest>, JsonRejection>,
+) -> std::result::Result<Json<KnowledgeResponse>, HttpError> {
+    let token = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .ok_or_else(|| HttpError(denied()))?
+        .to_owned();
+    let request = request
+        .map_err(|_| HttpError(Error::invalid("Invalid or oversized knowledge request")))?
+        .0;
+    tokio::task::spawn_blocking(move || server.execute_knowledge(&token, request))
+        .await
+        .map_err(|_| {
+            HttpError(Error::new(
+                ErrorKind::Unavailable,
+                "Knowledge operation failed",
+            ))
+        })?
+        .map(Json)
+        .map_err(HttpError)
+}
+
 pub fn router(server: Arc<Server>) -> Router {
     Router::new()
         .route("/v1/sync", post(handle))
+        .route("/v1/knowledge", post(handle_knowledge))
         .layer(DefaultBodyLimit::max(MAX_SYNC_BYTES))
         .with_state(server)
 }
 
 pub fn serve(config: &Path, directory: &Path, address: SocketAddr) -> Result<()> {
     let config: ServerConfig = serde_json::from_slice(&std::fs::read(config)?)?;
-    let server = Arc::new(Server::new(
-        config,
-        Arc::new(FileSharedStore {
+    let server = Arc::new(
+        Server::new(
+            config,
+            Arc::new(FileSharedStore {
+                directory: directory.to_owned(),
+            }),
+            |name| std::env::var(name).ok(),
+        )?
+        .with_knowledge_storage(Arc::new(lore_store::GitKnowledgeStorage {
             directory: directory.to_owned(),
-        }),
-        |name| std::env::var(name).ok(),
-    )?);
+        })),
+    );
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?

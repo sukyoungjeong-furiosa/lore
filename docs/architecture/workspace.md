@@ -1,39 +1,28 @@
 # Workspace
 
-A workspace provides a working context for mappings and knowledge discovery. It can be associated with a code checkout or worktree.
+A workspace associates a code checkout with a knowledge working branch and worktree. Code and knowledge histories remain separate.
 
-## State Ownership
+## Ownership
 
-- Mapping availability, pending mapping changes, synchronization baselines, and code projections are workspace-specific.
-- Separate worktrees have independent working state. Changes are not propagated between workspaces implicitly. Initialization may reuse repository and storage defaults without copying local changes.
-- Workspaces may share immutable mapping revisions and document caches without sharing local changes or projections.
-- A workspace may select a default local store and use other local stores or Lore remotes explicitly. Store identity and access location are separate from its immutable revision cache.
-- A cached external document remains backend-owned; caching does not grant access or editing permissions or create a Lore-owned copy.
+- Each code worktree has independent recorded changes, a knowledge working branch, synchronization baselines, and projections.
+- Workspaces using the same local knowledge store and repository share its central branch. Commit alone does not change that branch.
+- Immutable revisions and document caches may be shared. Credentials, projections, and pending changes are not committed knowledge.
+- A workspace's selected knowledge view and target code context are separate. Reading central knowledge may project anchors against any associated code worktree.
 
-## Knowledge Availability
+## Working Knowledge
 
-- A workspace need not hold every mapping from a selected store or every document from a connected backend. Shared mappings can be discovered without activating them locally.
-- A connected Lore remote may register several repositories and backends. Workspace discovery uses its current repository without narrowing the remote's shared registrations.
-- File or directory installation selects mappings associated with the requested code scope, accounting for known code projections.
-- Installation makes complete mapping revisions available, including their document references and anchors. It does not require fetching document content.
-- Documents can be accessed on demand through their owning backend. Discovery distinguishes recorded mappings from unrecorded suggestions.
-- Discovery results do not imply complete coverage of a code repository or document backend.
+- Creating and editing Lore-owned documents or mappings records workspace changes. Commit records selected changes on the working branch; unrelated recorded changes remain pending.
+- Reads on the working branch include its commits and recorded changes. Central reads include accepted knowledge only and do not activate working revisions.
+- Checkout changes the knowledge working branch without discarding pending changes. Reading central knowledge does not permit committing directly to it.
+- Pull incorporates accepted central changes into the working branch. Pending edits remain available; their editing baseline does not silently advance.
+- Applying edits, commits, or explicit conflict resolutions checks the versions observed by the caller. Conflicts preserve the working content and accepted history.
 
-## Local Changes
+## Availability and Projection
 
-- Recorded mapping changes remain local until explicitly pushed and are preserved until explicitly discarded or successfully synchronized.
-- Each synchronized mapping retains the shared revision on which its local state is based. Fetching another revision does not overwrite local changes or advance that baseline.
-- Document editing follows the owning backend's contract. External edits are not subject to Lore's mapping Push/Pull lifecycle.
-
-## Code Projection
-
-A [code projection](code-projection.md) describes how a recorded anchor corresponds to the workspace's current code.
-
-- Workspace projections account for uncommitted edits and remain separate from recorded mapping state.
-- Projection results must not overstate their certainty or applicability to current code.
+- A workspace need not hold all knowledge from a source. Related external documents remain backend-owned and can be retrieved on demand.
+- Code-scoped discovery accounts for recorded relationships and known projections. Discovery does not establish complete coverage or document validity.
+- [Code projections](code-projection.md) remain separate from document and mapping state and must not overstate their applicability.
 
 ## Offline Operation
 
-- Available mappings and cached documents can be read and navigated without server or backend access. Cached content retains its observed document state.
-- Local mapping changes remain available for later synchronization. Offline document editing depends on the owning backend's capabilities.
-- Unavailable documents remain identifiable; failed retrieval does not prevent work on available mappings and knowledge.
+Available knowledge can be read and edited, committed, and submitted to a local central branch without a server or model. Unavailable sources do not prevent work on available knowledge. Network publication remains separate.

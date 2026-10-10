@@ -6,22 +6,27 @@ use std::{
     path::{Path, PathBuf},
 };
 
+mod documents;
+mod knowledge;
+pub use documents::FileDocumentStore;
+pub use knowledge::{GitKnowledgeStorage, GitKnowledgeStore};
+
 /// Storage implementations atomically commit a head and its idempotency receipt.
 pub trait SharedStore: Send + Sync {
     fn catalog(
         &self,
-        descriptor: &MappingStoreDescriptor,
+        descriptor: &KnowledgeStoreDescriptor,
         repository: &str,
     ) -> Result<MappingCatalog>;
     fn read(
         &self,
-        store: &MappingStoreId,
+        store: &KnowledgeStoreId,
         mapping: &MappingId,
         revision: Option<&RevisionId>,
     ) -> Result<MappingBundle>;
     fn publish(
         &self,
-        descriptor: &MappingStoreDescriptor,
+        descriptor: &KnowledgeStoreDescriptor,
         subject: &str,
         request: &PublishMapping,
     ) -> Result<PublicationReceipt>;
@@ -61,11 +66,11 @@ fn atomic(path: &Path, bytes: &[u8]) -> Result<()> {
 }
 
 impl FileSharedStore {
-    fn directory(&self, store: &MappingStoreId) -> PathBuf {
+    fn directory(&self, store: &KnowledgeStoreId) -> PathBuf {
         self.directory.join(hash(store.as_str()))
     }
 
-    fn state(&self, store: &MappingStoreId) -> Result<StoreState> {
+    fn state(&self, store: &KnowledgeStoreId) -> Result<StoreState> {
         match std::fs::read(self.directory(store).join("state.json")) {
             Ok(bytes) => Ok(serde_json::from_slice(&bytes)?),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(StoreState::default()),
@@ -75,7 +80,7 @@ impl FileSharedStore {
 
     fn revision_path(
         &self,
-        store: &MappingStoreId,
+        store: &KnowledgeStoreId,
         mapping: &MappingId,
         revision: &RevisionId,
     ) -> PathBuf {
@@ -87,7 +92,7 @@ impl FileSharedStore {
 
     fn revision(
         &self,
-        store: &MappingStoreId,
+        store: &KnowledgeStoreId,
         mapping: &MappingId,
         revision: &RevisionId,
     ) -> Result<MappingView> {
@@ -120,7 +125,7 @@ impl FileSharedStore {
 impl SharedStore for FileSharedStore {
     fn catalog(
         &self,
-        descriptor: &MappingStoreDescriptor,
+        descriptor: &KnowledgeStoreDescriptor,
         repository: &str,
     ) -> Result<MappingCatalog> {
         let mut catalog = MappingCatalog::empty(repository);
@@ -141,7 +146,7 @@ impl SharedStore for FileSharedStore {
 
     fn read(
         &self,
-        store: &MappingStoreId,
+        store: &KnowledgeStoreId,
         mapping: &MappingId,
         revision: Option<&RevisionId>,
     ) -> Result<MappingBundle> {
@@ -184,7 +189,7 @@ impl SharedStore for FileSharedStore {
 
     fn publish(
         &self,
-        descriptor: &MappingStoreDescriptor,
+        descriptor: &KnowledgeStoreDescriptor,
         subject: &str,
         request: &PublishMapping,
     ) -> Result<PublicationReceipt> {

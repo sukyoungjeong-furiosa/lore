@@ -152,6 +152,12 @@
       {
         "command": "lore.setResolverToken",
         "title": "Lore: Set Model Connection Token"
+      },
+      {
+        "command": "lore.publishDocument",
+        "title": "Lore: Publish Local Document",
+        "icon": "$(cloud-upload)",
+        "enablement": "lore.readerWorking && !lore.readerDirty && !lore.readerBusy && !lore.readerIsHistorical"
       }
     ],
     "viewsContainers": {
@@ -236,6 +242,11 @@
         {
           "command": "lore.documentHistory",
           "when": "view == lore.reader && lore.readerIsLocalDocument"
+        },
+        {
+          "command": "lore.publishDocument",
+          "when": "view == lore.reader && lore.readerIsLocalDocument && lore.readerWorking && !lore.readerIsHistorical",
+          "group": "navigation@3"
         }
       ],
       "editor/context": [

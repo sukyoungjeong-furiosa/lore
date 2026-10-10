@@ -4,9 +4,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
-pub struct MappingStoreId(String);
+pub struct KnowledgeStoreId(String);
 
-impl MappingStoreId {
+impl KnowledgeStoreId {
     pub fn new() -> Self {
         Self(uuid::Uuid::new_v4().to_string())
     }
@@ -15,13 +15,13 @@ impl MappingStoreId {
     }
 }
 
-impl Default for MappingStoreId {
+impl Default for KnowledgeStoreId {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl TryFrom<String> for MappingStoreId {
+impl TryFrom<String> for KnowledgeStoreId {
     type Error = Error;
 
     fn try_from(value: String) -> Result<Self> {
@@ -30,13 +30,13 @@ impl TryFrom<String> for MappingStoreId {
     }
 }
 
-impl From<MappingStoreId> for String {
-    fn from(value: MappingStoreId) -> Self {
+impl From<KnowledgeStoreId> for String {
+    fn from(value: KnowledgeStoreId) -> Self {
         value.0
     }
 }
 
-impl std::str::FromStr for MappingStoreId {
+impl std::str::FromStr for KnowledgeStoreId {
     type Err = Error;
 
     fn from_str(value: &str) -> Result<Self> {
@@ -44,7 +44,7 @@ impl std::str::FromStr for MappingStoreId {
     }
 }
 
-impl std::fmt::Display for MappingStoreId {
+impl std::fmt::Display for KnowledgeStoreId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.0.fmt(f)
     }
@@ -59,8 +59,8 @@ pub struct RepositoryRegistration {
 /// Shared registrations contain resource identities and policy, not personal credentials.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct MappingStoreDescriptor {
-    pub id: MappingStoreId,
+pub struct KnowledgeStoreDescriptor {
+    pub id: KnowledgeStoreId,
     pub repositories: BTreeMap<String, RepositoryRegistration>,
     pub backends: BTreeSet<String>,
 }
@@ -68,7 +68,7 @@ pub struct MappingStoreDescriptor {
 /// The same mapping ID in two stores identifies two independent relationships.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct SharedMappingKey {
-    pub store: MappingStoreId,
+    pub store: KnowledgeStoreId,
     pub mapping: MappingId,
 }
 
@@ -81,7 +81,7 @@ fn validate_identity(value: &str) -> Result<()> {
     Ok(())
 }
 
-impl MappingStoreDescriptor {
+impl KnowledgeStoreDescriptor {
     pub fn validate(&self) -> Result<()> {
         for (repository, registration) in &self.repositories {
             validate_identity(repository)?;
@@ -134,3 +134,7 @@ impl MappingStoreDescriptor {
         Ok(())
     }
 }
+
+/// Compatibility names for the earlier mapping-only store API.
+pub type MappingStoreId = KnowledgeStoreId;
+pub type MappingStoreDescriptor = KnowledgeStoreDescriptor;

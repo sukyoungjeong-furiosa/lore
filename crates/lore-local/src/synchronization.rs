@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize)]
 struct PendingPush {
     request: PublishMapping,
-    source_store: Option<MappingStoreId>,
+    source_store: Option<KnowledgeStoreId>,
     target_before: Option<ActiveDocument>,
 }
 
@@ -19,7 +19,7 @@ pub struct PushResult {
 
 #[derive(Serialize)]
 pub struct PullResult {
-    pub store: MappingStoreId,
+    pub store: KnowledgeStoreId,
     pub mapping: MappingId,
     pub status: String,
     pub local_revision: Option<RevisionId>,
@@ -32,7 +32,7 @@ pub enum ConflictResolutionChoice {
     Shared,
 }
 
-fn baseline(active: &ActiveDocument, store: &MappingStoreId) -> Result<Option<RevisionId>> {
+fn baseline(active: &ActiveDocument, store: &KnowledgeStoreId) -> Result<Option<RevisionId>> {
     match &active.shared_baseline {
         Some(baseline) if baseline.source == store.as_str() => Ok(Some(baseline.revision.parse()?)),
         Some(_) => Err(Error::new(
@@ -45,7 +45,7 @@ fn baseline(active: &ActiveDocument, store: &MappingStoreId) -> Result<Option<Re
 
 fn shared_active(
     revision: RevisionId,
-    store: &MappingStoreId,
+    store: &KnowledgeStoreId,
     shared: Option<&RevisionId>,
 ) -> ActiveDocument {
     ActiveDocument {
@@ -74,14 +74,14 @@ impl Workspace {
         atomic_write(&self.state_path, &serde_json::to_vec_pretty(&state)?)
     }
 
-    pub fn connect_remote(&self, store: &MappingStoreId, name: &str) -> Result<()> {
+    pub fn connect_remote(&self, store: &KnowledgeStoreId, name: &str) -> Result<()> {
         let _lock = self.lock()?;
         let mut state = self.state()?;
         state.connected_remotes.insert(store.clone(), name.into());
         atomic_write(&self.state_path, &serde_json::to_vec_pretty(&state)?)
     }
 
-    pub fn disconnect_remote(&self, store: &MappingStoreId) -> Result<()> {
+    pub fn disconnect_remote(&self, store: &KnowledgeStoreId) -> Result<()> {
         let _lock = self.lock()?;
         let mut state = self.state()?;
         state.connected_remotes.remove(store);
@@ -90,7 +90,7 @@ impl Workspace {
 
     fn history_bundle(
         &self,
-        store: &MappingStoreId,
+        store: &KnowledgeStoreId,
         id: &MappingId,
         active: &ActiveDocument,
     ) -> Result<MappingBundle> {
@@ -124,9 +124,9 @@ impl Workspace {
     pub fn push_mapping(
         &self,
         remote: &dyn MappingStoreClient,
-        store: &MappingStoreId,
+        store: &KnowledgeStoreId,
         id: &MappingId,
-        from_store: Option<&MappingStoreId>,
+        from_store: Option<&KnowledgeStoreId>,
     ) -> Result<PushResult> {
         let directory = self
             .state_path
@@ -304,7 +304,7 @@ impl Workspace {
     pub fn fetch_mapping(
         &self,
         remote: &dyn MappingStoreClient,
-        store: &MappingStoreId,
+        store: &KnowledgeStoreId,
         id: &MappingId,
     ) -> Result<MappingBundle> {
         let bundle = remote.read(id, None)?;
@@ -331,7 +331,7 @@ impl Workspace {
     pub fn pull_mapping(
         &self,
         remote: &dyn MappingStoreClient,
-        store: &MappingStoreId,
+        store: &KnowledgeStoreId,
         id: &MappingId,
     ) -> Result<PullResult> {
         let before = self
@@ -548,7 +548,7 @@ impl Workspace {
 
     pub fn observed_store_mapping(
         &self,
-        store: &MappingStoreId,
+        store: &KnowledgeStoreId,
         id: &MappingId,
     ) -> Result<Option<ActiveDocument>> {
         Ok(self

@@ -1,7 +1,7 @@
 use crate::{ActiveDocument, Workspace, WorkspaceState, atomic_write, now_ms};
 use lore_core::{
-    Actor, Anchor, AnchorResolver, DocumentReference, Error, ErrorKind, Mapping, MappingId,
-    MappingRepository, MappingRevision, MappingStoreId, MappingView, PathScope, Projection, Result,
+    Actor, Anchor, AnchorResolver, DocumentReference, Error, ErrorKind, KnowledgeStoreId, Mapping,
+    MappingId, MappingRepository, MappingRevision, MappingView, PathScope, Projection, Result,
     RevisionId,
 };
 use serde::Serialize;
@@ -63,14 +63,14 @@ impl MappingRepository for FileMappingRepository {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct LocatedMapping {
-    pub store: Option<MappingStoreId>,
+    pub store: Option<KnowledgeStoreId>,
     pub view: lore_core::MappingSummaryView,
     pub projections: Vec<Projection>,
 }
 
 #[derive(Clone, Debug, Serialize)]
 pub struct ScopedMappingView {
-    pub store: Option<MappingStoreId>,
+    pub store: Option<KnowledgeStoreId>,
     pub view: MappingView,
 }
 
@@ -78,8 +78,8 @@ impl WorkspaceState {
     pub(crate) fn mapping_scope(
         &self,
         id: &MappingId,
-        selected: Option<&MappingStoreId>,
-    ) -> Result<Option<MappingStoreId>> {
+        selected: Option<&KnowledgeStoreId>,
+    ) -> Result<Option<KnowledgeStoreId>> {
         if let Some(store) = selected {
             if self
                 .store_mappings
@@ -118,7 +118,7 @@ impl WorkspaceState {
 
     pub(crate) fn mapping_states(
         &self,
-        store: Option<&MappingStoreId>,
+        store: Option<&KnowledgeStoreId>,
     ) -> Option<&std::collections::BTreeMap<MappingId, ActiveDocument>> {
         match store {
             Some(store) => self.store_mappings.get(store),
@@ -128,7 +128,7 @@ impl WorkspaceState {
 
     pub(crate) fn mapping_states_mut(
         &mut self,
-        store: Option<&MappingStoreId>,
+        store: Option<&KnowledgeStoreId>,
     ) -> &mut std::collections::BTreeMap<MappingId, ActiveDocument> {
         match store {
             Some(store) => self.store_mappings.entry(store.clone()).or_default(),
@@ -138,11 +138,18 @@ impl WorkspaceState {
 }
 
 impl Workspace {
-    pub fn mapping_store_for(&self, id: &MappingId) -> Result<Option<MappingStoreId>> {
-        self.state()?.mapping_scope(id, self.mapping_store.as_ref())
+    pub fn mapping_store_for(&self, id: &MappingId) -> Result<Option<KnowledgeStoreId>> {
+        let state = self.state()?;
+        if self.mapping_store.is_none()
+            && self.committed_knowledge_mappings(&state)?.contains_key(id)
+            && !state.mappings.contains_key(id)
+        {
+            return Ok(None);
+        }
+        state.mapping_scope(id, self.mapping_store.as_ref())
     }
 
-    fn origin_path(&self, store: &MappingStoreId, id: &MappingId) -> Result<PathBuf> {
+    fn origin_path(&self, store: &KnowledgeStoreId, id: &MappingId) -> Result<PathBuf> {
         Ok(self
             .state()?
             .store
@@ -153,7 +160,7 @@ impl Workspace {
 
     pub(crate) fn retain_store_revisions<'a>(
         &self,
-        store: &MappingStoreId,
+        store: &KnowledgeStoreId,
         id: &MappingId,
         revisions: impl IntoIterator<Item = &'a RevisionId>,
     ) -> Result<()> {
@@ -181,7 +188,7 @@ impl Workspace {
 
     fn is_store_revision(
         &self,
-        store: &MappingStoreId,
+        store: &KnowledgeStoreId,
         id: &MappingId,
         revision: &RevisionId,
     ) -> Result<bool> {
@@ -195,7 +202,7 @@ impl Workspace {
         }
     }
 
-    pub fn with_mapping_store(mut self, store: MappingStoreId) -> Self {
+    pub fn with_mapping_store(mut self, store: KnowledgeStoreId) -> Self {
         self.mapping_store = Some(store);
         self
     }
@@ -206,7 +213,41 @@ impl Workspace {
         revision: Option<&RevisionId>,
     ) -> Result<MappingView> {
         let state = self.state()?;
+        if self.mapping_store.is_none()
+            && (self.central_view || !state.mappings.contains_key(id))
+            && let Some(record) = self.committed_knowledge_mappings(&state)?.remove(id)
+        {
+            let current = self.mapping_repository.record(&record)?;
+            let selected = revision.unwrap_or(&current);
+            let record = if *selected == current {
+                record
+            } else if self.central_view {
+                self.knowledge_history(&state)?
+                    .ok_or_else(|| Error::new(ErrorKind::NotInitialized, "Run lore init"))?
+                    .mapping_records("main", id)?
+                    .into_iter()
+                    .find(|record| record.id().ok().as_ref() == Some(selected))
+                    .ok_or_else(|| {
+                        Error::new(
+                            ErrorKind::NotFound,
+                            "Mapping revision is not in central history",
+                        )
+                    })?
+            } else {
+                self.mapping_repository.load(id, selected)?
+            };
+            return Ok(MappingView {
+                revision: selected.clone(),
+                record,
+            });
+        }
         let store = state.mapping_scope(id, self.mapping_store.as_ref())?;
+        if self.central_view && store.is_none() {
+            return Err(Error::new(
+                ErrorKind::NotFound,
+                "Mapping is not in central knowledge",
+            ));
+        }
         let active = &state.mapping_states(store.as_ref()).unwrap()[id];
         let selected = revision.unwrap_or(&active.revision);
         if let Some(store) = &store
@@ -235,7 +276,7 @@ impl Workspace {
     pub fn list_scoped_mappings(&self, include_archived: bool) -> Result<Vec<ScopedMappingView>> {
         let state = self.state()?;
         let mut scopes = vec![];
-        if self.mapping_store.is_none() {
+        if self.mapping_store.is_none() && !self.central_view {
             scopes.push((None, &state.mappings));
         }
         scopes.extend(
@@ -250,6 +291,19 @@ impl Workspace {
                 .map(|(store, mappings)| (Some(store.clone()), mappings)),
         );
         let mut views = vec![];
+        if self.mapping_store.is_none() {
+            for (id, record) in self.committed_knowledge_mappings(&state)? {
+                if (self.central_view || !state.mappings.contains_key(&id))
+                    && (include_archived || !record.mapping.archived)
+                {
+                    let revision = self.mapping_repository.record(&record)?;
+                    views.push(ScopedMappingView {
+                        store: None,
+                        view: MappingView { revision, record },
+                    });
+                }
+            }
+        }
         for (store, mappings) in scopes {
             for (id, active) in mappings {
                 let record = self.mapping_repository.load(id, &active.revision)?;
@@ -317,6 +371,34 @@ impl Workspace {
     ) -> Result<MappingView> {
         let _lock = self.lock()?;
         let mut state = self.state()?;
+        if self.mapping_store.is_none() && state.mapping_scope(id, None).is_err() {
+            let record = self
+                .committed_knowledge_mappings(&state)?
+                .remove(id)
+                .ok_or_else(|| {
+                    Error::new(
+                        ErrorKind::NotFound,
+                        "Mapping is not in this knowledge branch",
+                    )
+                })?;
+            let revision = self.mapping_repository.record(&record)?;
+            if *expected != revision {
+                return Err(Error::new(
+                    ErrorKind::Conflict,
+                    "Mapping changed since it was read",
+                ));
+            }
+            state.mappings.insert(
+                id.clone(),
+                ActiveDocument {
+                    revision: revision.clone(),
+                    shared_baseline: Some(crate::SharedBaseline {
+                        source: self.document_source(&state)?,
+                        revision: revision.to_string(),
+                    }),
+                },
+            );
+        }
         let store = state.mapping_scope(id, self.mapping_store.as_ref())?;
         let active = state
             .mapping_states_mut(store.as_ref())
@@ -357,6 +439,28 @@ impl Workspace {
     }
 
     pub fn mapping_history(&self, id: &MappingId) -> Result<Vec<MappingView>> {
+        let state = self.state()?;
+        if self.mapping_store.is_none()
+            && self.committed_knowledge_mappings(&state)?.contains_key(id)
+        {
+            let history = self
+                .knowledge_history(&state)?
+                .ok_or_else(|| Error::new(ErrorKind::NotInitialized, "Run lore init"))?;
+            let worktree = state
+                .knowledge_worktree
+                .as_ref()
+                .ok_or_else(|| Error::new(ErrorKind::NotInitialized, "Run lore init"))?;
+            for record in history.mapping_records(
+                if self.central_view {
+                    "main"
+                } else {
+                    &worktree.branch
+                },
+                id,
+            )? {
+                self.mapping_repository.record(&record)?;
+            }
+        }
         let mut result = vec![];
         let mut next = Some(self.read_mapping(id, None)?.revision);
         while let Some(revision) = next {

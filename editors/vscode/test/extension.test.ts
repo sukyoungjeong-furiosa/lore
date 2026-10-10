@@ -26,6 +26,9 @@ export async function run(): Promise<void> {
   const target = cli(['create', 'Scheduling Rules', '--stdin', '--directory', 'design'], '# Rules\nStable IDs keep links alive.\n');
   const page = cli(['create', 'Scheduler Design', '--stdin', '--directory', 'design'], `# Context\nRead [[id:${target.document.id}|the rules]].\n\n<script>window.injection = true</script>\n\n[unsafe](command:workbench.action.closeWindow)\n`);
   const attached = cli(['attach', page.document.id, 'scheduler.py:2-3']);
+  cli(['commit', target.document.id, '--if-match', target.revision]);
+  const firstCommitted = cli(['commit', page.document.id, '--if-match', attached.revision]);
+  cli(['push']);
   const extension = vscode.extensions.getExtension('lore-local.lore'); assert(extension);
   const api = await extension.activate();
   const code = await vscode.workspace.openTextDocument(path.join(root, 'scheduler.py'));
@@ -33,6 +36,20 @@ export async function run(): Promise<void> {
   const lenses = await vscode.commands.executeCommand<vscode.CodeLens[]>('vscode.executeCodeLensProvider', code.uri);
   assert(lenses?.some(l => l.command?.arguments?.[0] === page.document.id), 'CodeLens should navigate to the attached document');
   const groups = await api.tree.getChildren(); assert(groups.some((g: any) => g.label === 'design'));
+  const peer = path.join(process.env.LORE_TEST_ROOT!, 'peer');
+  execFileSync('git', ['-C', root, 'worktree', 'add', '-qb', 'peer-documents', peer]);
+  const peerCli = (args: string[], input?: string) => JSON.parse(execFileSync(executable, ['--repo', peer, '--json', '--author', 'agent', ...args], { env: process.env, input, encoding: 'utf8' }));
+  peerCli(['init']);
+  const shared = peerCli(['create', 'Agent findings across worktrees', '--stdin'], 'Committed findings from another worktree.');
+  let changed = false;
+  const listener = api.tree.onDidChangeTreeData(() => { changed = true; });
+  peerCli(['commit', shared.document.id, '--if-match', shared.revision]);
+  assert(!(await api.tree.getChildren()).some((entry: any) => entry.view?.document.id === shared.document.id), 'A private commit must not appear in the central view');
+  peerCli(['push']);
+  await eventually(async () => changed ? true : undefined);
+  listener.dispose();
+  assert((await api.tree.getChildren()).some((entry: any) => entry.view?.document.id === shared.document.id), 'An integrated peer proposal should appear without manual refresh or install');
+  assert(!cli(['status']).workspace.documents[shared.document.id], 'Browsing a peer commit must not activate it locally');
   assert(!vscode.extensions.getExtension('lore-local.lore')!.packageJSON.contributes.commands.some((command: any) => command.command === 'lore.toggleCurrentFile'));
   await api.open(page.document.id, root);
   assert(!vscode.window.tabGroups.all.flatMap(group => group.tabs).some(tab => tab.input instanceof vscode.TabInputWebview), 'Lore readers belong in the sidebar, not editor tabs');
@@ -65,6 +82,11 @@ export async function run(): Promise<void> {
     await eventually(async () => await frame.locator('#reader').isVisible() ? true : undefined);
     const saved = cli(['show', page.document.id]); assert(saved.document.authorship.includes('human')); assert(!('curated' in saved)); assert(!('curation' in saved.document));
     assert.equal(saved.document.directory, 'architecture/scheduling');
+    assert(!(await api.tree.getChildren()).some((entry: any) => entry.label === 'architecture'), 'Saving remains private until publication');
+    assert((await frame.locator('#status').textContent())?.includes('Working copy'));
+    await vscode.commands.executeCommand('lore.publishDocument');
+    await eventually(async () => cli(['--central','show',page.document.id]).document.directory === 'architecture/scheduling' ? true : undefined);
+    await eventually(async () => await frame.locator('#reader').isVisible() && (await frame.locator('#status').textContent())?.includes(' · Central') ? true : undefined);
     const directories = await api.tree.getChildren();
     const architecture = directories.find((entry: any) => entry.label === 'architecture');
     assert.equal(architecture.children[0].label, 'scheduling');
@@ -131,10 +153,10 @@ if (args.includes('edit')) {
     assert.equal(cli(['search', 'Scheduling Rules']).length, 0);
     await vscode.commands.executeCommand(cli(['show', target.document.id]).document.archived ? 'lore.restoreDocument' : 'lore.archiveDocument');
     await eventually(async () => !cli(['show', target.document.id]).document.archived ? true : undefined);
-    const old = cli(['links', page.document.id, '--revision', attached.revision]);
+    const old = cli(['links', page.document.id, '--revision', firstCommitted.revision]);
     assert.equal(old.outgoing[0].matches[0].id, target.document.id);
     const panel = api.panels.get(root);
-    await panel.open(page.document.id, { historical: attached.revision });
+    await panel.open(page.document.id, { historical: firstCommitted.revision });
     await eventually(async () => (await frame.locator('#status').textContent())?.includes('Historical revision') ? true : undefined);
     assert.equal(await frame.locator('#editor').isVisible(), false);
     assert.equal(await frame.locator('[data-route]').count(), 1);
@@ -244,9 +266,11 @@ if (args.includes('edit')) {
     await api.knowledge.getChildren(knowledgeRoots[0]);
     await api.knowledge.getChildren(knowledgePages[0]);
 
-    cli(['create', 'Filter Unrelated', '--directory', 'design']);
-    cli(['create', 'scheduler.literal', '--directory', 'design']);
-    cli(['create', 'schedulerXliteral', '--directory', 'design']); api.refresh();
+    for (const title of ['Filter Unrelated', 'scheduler.literal', 'schedulerXliteral']) {
+      const created = cli(['create',title,'--directory','design']);
+      cli(['commit',created.document.id,'--if-match',created.revision]);
+    }
+    cli(['push']); api.refresh();
     await vscode.commands.executeCommand('lore.knowledge.focus');
     const knowledgeFrame = await eventually(() => Webview.connect(browser!, '#knowledge-tree').catch(() => undefined));
     assert.equal(await knowledgeFrame.locator('#knowledge-filter').isVisible(), false, 'The filter row is initially hidden within Knowledge');
@@ -347,6 +371,7 @@ if (args.includes('edit')) {
     await eventually(async () => cli(['docs', 'show', backend, notionChild, '--cached']).cached ? true : undefined);
     console.log('Lore VS Code: shared credentials, strict title filtering, regex, invalid patterns, continuous sidebar input, focus persistence, clearing, and cache-only filtering passed');
     const mapping = cli(['map', 'create', backend, notionChild, 'scheduler.py:2-3', '--context', 'Scheduler design context']);
+    cli(['commit', mapping.record.mapping.id, '--mapping', '--if-match', mapping.revision]); cli(['push']);
     await vscode.window.showTextDocument(code, vscode.ViewColumn.One);
     const mappedLenses = await vscode.commands.executeCommand<vscode.CodeLens[]>('vscode.executeCodeLensProvider', code.uri);
     assert(mappedLenses?.some(lens => lens.command?.command === 'lore.openBackend'), 'Mapped backend documents should have CodeLens');
@@ -368,14 +393,17 @@ if (args.includes('edit')) {
     assert.equal(vscode.window.activeTextEditor?.selection.start.line, 1);
     assert.equal(await backendFrame.locator('#backend-mode').isVisible(), true, 'Code navigation keeps the document open');
     const scoped = cli(['map', 'create', backend, notionChild, '--glob', '*.py', '--context', 'Whole Python files']);
+    cli(['commit', scoped.record.mapping.id, '--mapping', '--if-match', scoped.revision]); cli(['push']);
     api.refresh();
     await eventually(async () => api.mappings.summary?.count === 2 ? true : undefined);
     const scopeEntry = (await api.mappings.getChildren()).find((entry: any) => entry.label === '*.py');
     assert.equal(scopeEntry?.description, 'Code scope');
     assert.equal(api.mappings.getTreeItem(scopeEntry).command, undefined, 'Glob scopes do not pretend to identify a line location');
-    cli(['map', 'archive', scoped.record.mapping.id, '--if-match', scoped.revision]);
+    const archivedScope=cli(['map', 'archive', scoped.record.mapping.id, '--if-match', cli(['map','show',scoped.record.mapping.id]).revision]);
+    cli(['commit',scoped.record.mapping.id,'--mapping','--if-match',archivedScope.revision]); cli(['push']);
     const nested = '00000000-0000-4000-8000-000000000002';
-    cli(['map', 'create', backend, nested, 'scheduler.py:1-1', '--context', 'Another document']);
+    const nestedMap = cli(['map', 'create', backend, nested, 'scheduler.py:1-1', '--context', 'Another document']);
+    cli(['commit', nestedMap.record.mapping.id, '--mapping', '--if-match', nestedMap.revision]); cli(['push']);
     api.refresh();
     assert.equal((await api.mappings.getChildren()).length, 1, 'Only the selected document connections are shown');
     const beforeRepeat = (await mockState()).requestCount;
@@ -432,11 +460,13 @@ if (args.includes('edit')) {
     assert.equal(vscode.window.activeTextEditor?.document.uri.fsPath, path.join(root, 'planner.py'));
     assert.equal(vscode.window.activeTextEditor?.selection.start.line, 1);
     const current = cli(['map', 'show', mapping.record.mapping.id]);
-    cli(['map', 'archive', mapping.record.mapping.id, '--if-match', current.revision]);
+    const archivedMapping=cli(['map', 'archive', mapping.record.mapping.id, '--if-match', current.revision]);
+    cli(['commit',mapping.record.mapping.id,'--mapping','--if-match',archivedMapping.revision]); cli(['push']);
     api.refresh();
     assert.equal((await api.mappings.getChildren())[0].label, 'No connected code');
     const archived = cli(['map', 'show', mapping.record.mapping.id]);
-    cli(['map', 'restore', mapping.record.mapping.id, '--if-match', archived.revision]);
+    const restoredMap = cli(['map', 'restore', mapping.record.mapping.id, '--if-match', archived.revision]);
+    cli(['commit', mapping.record.mapping.id, '--mapping', '--if-match', restoredMap.revision]); cli(['push']);
     api.refresh();
     assert.equal((await api.mappings.getChildren())[0].label, 'planner.py:2-3');
     assert.equal((await mockState()).requestCount, beforeConnections, 'Code connections do not request backend content');

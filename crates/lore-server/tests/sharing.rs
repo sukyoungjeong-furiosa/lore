@@ -5,8 +5,8 @@ use std::{
     sync::Arc,
 };
 
-fn descriptor(id: &str) -> MappingStoreDescriptor {
-    MappingStoreDescriptor {
+fn descriptor(id: &str) -> KnowledgeStoreDescriptor {
+    KnowledgeStoreDescriptor {
         id: id.parse().unwrap(),
         repositories: BTreeMap::from([
             ("compiler".into(), RepositoryRegistration::default()),
@@ -50,7 +50,7 @@ fn view(parent: Option<&MappingView>, context: &str) -> MappingView {
 }
 
 fn request(
-    store: &MappingStoreDescriptor,
+    store: &KnowledgeStoreDescriptor,
     history: Vec<MappingView>,
     expected: Option<RevisionId>,
 ) -> PublishMapping {

@@ -1,5 +1,5 @@
 use crate::atomic_write;
-use lore_core::{Error, ErrorKind, MappingStoreId, Result};
+use lore_core::{Error, ErrorKind, KnowledgeStoreId, Result};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -11,7 +11,7 @@ use std::{
 #[serde(deny_unknown_fields)]
 pub struct LoreRemote {
     pub server_url: String,
-    pub store: MappingStoreId,
+    pub store: KnowledgeStoreId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token_env: Option<String>,
 }

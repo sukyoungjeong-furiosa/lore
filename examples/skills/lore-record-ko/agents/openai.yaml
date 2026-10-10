@@ -1,0 +1,4 @@
+interface:
+  display_name: "Lore 지식 기록"
+  short_description: "작업에서 얻은 재사용할 지식을 점검하고 Lore에 기록한다"
+  default_prompt: "$lore-record-ko로 이번 작업에서 남길 지식이 있는지 점검하고 기록해줘."

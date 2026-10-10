@@ -1,5 +1,7 @@
 mod backend;
 mod catalog;
+mod document_store;
+mod knowledge;
 mod mapping;
 mod model;
 mod projection;
@@ -11,6 +13,8 @@ mod wiki;
 
 pub use backend::*;
 pub use catalog::*;
+pub use document_store::*;
+pub use knowledge::*;
 pub use mapping::*;
 pub use model::*;
 pub use projection::*;

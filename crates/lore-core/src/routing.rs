@@ -1,5 +1,5 @@
 use crate::{
-    AnchorSummary, DocumentId, DocumentReference, MappingId, MappingStoreId, PathScope, Result,
+    AnchorSummary, DocumentId, DocumentReference, KnowledgeStoreId, MappingId, PathScope, Result,
     SharedMappingKey,
 };
 use serde::{Deserialize, Serialize};
@@ -15,7 +15,7 @@ pub enum LoreDocument {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RoutingDocument {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub store: Option<MappingStoreId>,
+    pub store: Option<KnowledgeStoreId>,
     #[serde(default)]
     pub mapping: Option<MappingId>,
     pub document: LoreDocument,

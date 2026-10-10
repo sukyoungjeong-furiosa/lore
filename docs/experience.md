@@ -19,6 +19,7 @@ Lore makes related knowledge available while working on code, without requiring 
 ## Local Work and Agent Context
 
 - Worktrees share document backend connections and document caches while keeping local changes and code projections separate. Updates preserve this data.
+- The editor browses accepted local central knowledge. Saving records a working copy; publishing commits it and submits it to local central knowledge.
 - Unsaved document drafts survive navigation. Conflicting saves preserve edits rather than overwriting another revision.
 - Within an agent session, each Lore document is automatically introduced at most once. Explicit discovery and reading are always available.
 - Automatic introduction supplies related document references and recorded code scopes or lines. Path mentions are best-effort observations; they do not establish file access, current correspondence, or explanation validity.

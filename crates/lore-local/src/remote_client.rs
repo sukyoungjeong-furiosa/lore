@@ -52,7 +52,22 @@ impl HttpMappingRemote {
     }
 
     fn request(&self, request: StoreRequest) -> Result<StoreResponse> {
-        let bytes = serde_json::to_vec(&request)?;
+        self.send_request("sync", &request)
+    }
+
+    pub(crate) fn request_knowledge(
+        &self,
+        request: &KnowledgeRequest,
+    ) -> Result<KnowledgeResponse> {
+        self.send_request("knowledge", request)
+    }
+
+    fn send_request<T: serde::Serialize, R: serde::de::DeserializeOwned>(
+        &self,
+        operation: &str,
+        request: &T,
+    ) -> Result<R> {
+        let bytes = serde_json::to_vec(request)?;
         if bytes.len() > MAX_SYNC_BYTES {
             return Err(Error::invalid("Synchronization request exceeds 16 MiB"));
         }
@@ -62,7 +77,7 @@ impl HttpMappingRemote {
             .map_err(|_| Error::invalid("Invalid Lore server URL"))?
             .pop_if_empty()
             .push("v1")
-            .push("sync");
+            .push(operation);
         let unavailable = || {
             Error::new(
                 ErrorKind::Unavailable,
@@ -115,7 +130,7 @@ impl HttpMappingRemote {
 }
 
 impl MappingStoreClient for HttpMappingRemote {
-    fn descriptor(&self) -> Result<MappingStoreDescriptor> {
+    fn descriptor(&self) -> Result<KnowledgeStoreDescriptor> {
         match self.request(StoreRequest::Describe {
             store: self.connection.store.clone(),
         })? {
@@ -208,7 +223,7 @@ impl RemoteCatalogCache {
         }
     }
 
-    fn path(&self, store: &MappingStoreId, repository: &str) -> PathBuf {
+    fn path(&self, store: &KnowledgeStoreId, repository: &str) -> PathBuf {
         self.directory
             .join(hash(store.as_str()))
             .join(format!("{}.json", hash(repository)))
@@ -216,7 +231,7 @@ impl RemoteCatalogCache {
 
     pub fn read(
         &self,
-        store: &MappingStoreId,
+        store: &KnowledgeStoreId,
         repository: &str,
     ) -> Result<RemoteCatalogObservation> {
         let bytes = std::fs::read(self.path(store, repository)).map_err(|error| {

@@ -1,7 +1,11 @@
 mod backends;
 mod catalog;
 mod credentials;
+mod document_commits;
 mod git;
+mod knowledge;
+mod knowledge_remote;
+pub use knowledge::KnowledgeWorktree;
 mod local_stores;
 mod mappings;
 mod remote_client;
