@@ -2,7 +2,7 @@
 
 Lore links code to documentation for humans and AI agents.
 
-Browse documents, map them to code, project anchors across revisions, and share knowledge locally or through a Lore server. [Design (한국어)](docs/design.md) explains the structure and intent; [Architecture](docs/architecture/overview.md) defines the contracts.
+Browse documents, map them to code, project anchors across revisions, and share knowledge locally or through a Lore server. [Technical Overview (한국어)](docs/design.md) describes the models, components, and sharing semantics; [Architecture](docs/architecture/overview.md) defines the contracts.
 
 ## Install
 
@@ -98,6 +98,6 @@ Earlier mapping-only catalogs and `push <mapping-id>` remain compatibility opera
 
 ## Documentation
 
-- [Design (한국어)](docs/design.md)
+- [Technical Overview (한국어)](docs/design.md)
 - [Architecture](docs/architecture/)
 - [Experience](docs/experience.md)
