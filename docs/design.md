@@ -1,20 +1,135 @@
 # Lore 설계와 기능
 
-Lore는 외부 문서를 읽고, 문서와 코드의 관계를 기록하고, 그 지식을 worktree와 팀 사이에서 공유하는 도구입니다. CLI, VS Code 확장, Agent Hook이 같은 지식과 작업 규칙을 사용합니다.
+Lore는 **코드에 연결된 지식을 독립된 worktree에서 작성·버전 관리하고, 로컬 중앙에 통합한 뒤 팀에 제안하는 지식 협업 시스템**입니다. 사람과 여러 Agent가 같은 코드를 다루더라도 미완성 작업은 격리하고, 받아들인 결과는 함께 발견할 수 있습니다.
 
-이 문서는 실제 기능과 사용 흐름을 먼저 소개하고, 각 기능을 뒷받침하는 구조와 설계 의도를 설명합니다. 코드를 읽지 않고도 Lore의 주요 동작, 구성 요소, 현재 범위와 지원 계획을 이해할 수 있도록 정리했습니다.
+대표적인 흐름은 다음과 같습니다. 코드 작업 중 관련 설계 문서를 발견하고, 새 결론이나 코드 관계를 자기 Lore 브랜치에 기록합니다. Commit으로 작업 이력을 만든 뒤 Push로 중앙에 제안합니다. 통합된 결과는 사람의 VS Code와 다른 Agent의 탐색에 나타나며, 팀에 공유할 변경은 별도로 선택합니다.
 
-| 기능 | 사용 경험 | 현재 범위 |
+현재 Git을 지식 이력과 worktree의 구현에 사용합니다. 그 위에 Lore가 문서·Mapping 단위의 제안과 통합 의미를 정의합니다. **Lore Push는 PR 생성에, Integration은 Merge에 가깝습니다.** 지식을 GitHub에 게시하거나 Git 프로토콜로 전송해야 한다는 뜻은 아닙니다.
+
+문서 원본은 Notion 같은 백엔드에 남겨둘 수 있습니다. 팀에 이미 있는 130여 개의 PR 디자인·아이디어 문서를 이관 없이 활용하고, 앞으로 추가되는 문서도 코드에 연결할 수 있습니다. Lore-owned 문서도 같은 협업 흐름에 참여합니다.
+
+이 문서는 먼저 작업과 공유의 핵심 흐름을 설명하고, 문서 탐색·코드 연결·Agent Hook 등 실제 기능이 그 구조 안에서 어떻게 동작하는지 소개합니다. CLI의 `<...>`는 채울 ID나 값이며, 예시는 작업 대상 코드 checkout에서 실행합니다.
+
+## worktree 격리와 대칭적인 지식 협업
+
+### worktree, local main, team remote
+
+각 코드 worktree에는 대응하는 Lore 작업 브랜치와 작업 사본이 있습니다. 코드 이력과 지식 이력은 별개이고, 지식은 코드 repository 밖의 Knowledge store에 보관합니다. **local main**은 선택한 로컬 store와 코드 repository 범위에서 받아들인 중앙 지식입니다.
+
+```mermaid
+flowchart TD
+    T["Team remote의 중앙 지식"]
+    A["사람 A의 local main<br/>VS Code가 탐색하는 지식"]
+    B["사람 B의 local main<br/>VS Code가 탐색하는 지식"]
+    A1["Agent A1의 Lore worktree"]
+    A2["Agent A2의 Lore worktree"]
+    B1["Agent B1의 Lore worktree"]
+    B2["Agent B2의 Lore worktree"]
+    A1 -->|"Commit → Push → Integration"| A
+    A2 -->|"Commit → Push → Integration"| A
+    B1 -->|"Commit → Push → Integration"| B
+    B2 -->|"Commit → Push → Integration"| B
+    A -->|"선택적 Push → Integration"| T
+    B -->|"선택적 Push → Integration"| T
+    T -->|"Pull"| A
+    T -->|"Pull"| B
+    A -->|"Pull"| A1
+    A -->|"Pull"| A2
+    B -->|"Pull"| B1
+    B -->|"Pull"| B2
+```
+
+이 구조는 세 가지 경계를 만듭니다.
+
+- **작업 격리와 중앙 관찰:** Agent A와 B는 각자 수정하므로 서로의 미완성 문서에 영향을 받지 않습니다. 사람은 local main에 통합된 결과를 관찰하고, 작업 브랜치는 Pull로 반영합니다.
+- **작업 완료와 공유:** 저장은 편집을 기록하고 Commit은 자기 이력을 만듭니다. 다른 작업자가 사용할 지식으로 받아들이는 일은 Push와 Integration을 통해 별도로 수행합니다.
+- **로컬과 원격의 대칭성:** local main은 Agent들에게는 공유 중앙이고, Team remote에 대해서는 변경 제출자입니다. 작업 브랜치 → 개인 중앙과 개인 중앙 → 팀 중앙에 같은 제안·통합 모델을 적용합니다.
+
+### VS Code가 local main을 보는 이유
+
+사람이 중앙 코드 checkout을 열고 여러 Agent가 별도 worktree에서 작업할 때, 편집기가 한 Agent의 작업 브랜치만 보여주면 다른 Agent의 결과를 놓칩니다. 반대로 모든 작업 사본을 섞어 보여주면 미완성 수정까지 중앙 지식처럼 보입니다.
+
+그래서 확장은 **선택한 store의 local main을 탐색 기준으로 사용**합니다. Agent가 자기 브랜치에서 커밋만 한 문서는 나타나지 않고, 중앙에 통합한 결과는 다른 Agent의 worktree로 전환하지 않아도 발견할 수 있습니다. 사람 자신이 편집하는 작업 사본은 따로 구분합니다. 화면에 보이는 중앙 지식과 현재 코드 checkout은 별개의 선택이므로, 그 지식의 코드 참조는 사람이 보는 코드 상태에 맞춰 해석합니다.
+
+![local main의 문서, 코드 연결, 내장 reader](images/vscode-local-document.png)
+
+*실제 확장에 설명용 로컬 지식을 통합한 화면입니다. Knowledge에는 중앙 문서가 나타나고, 선택한 문서의 연결과 본문은 Mappings와 Document에서 읽습니다. 다른 worktree의 미통합 초안은 이 목록에 섞이지 않습니다.*
+
+### Git의 직관과 Lore의 동작
+
+| 단계 | Lore에서의 의미 |
+| --- | --- |
+| 작성·편집 | workspace에 변경을 기록합니다. 다른 브랜치나 중앙에 게시하지 않습니다. |
+| Commit | 선택한 문서 또는 Mapping의 기록된 상태를 작업 브랜치 이력에 담습니다. |
+| Push | 상위 중앙에 변경 제안을 생성합니다. 원격 브랜치 ref를 갱신하는 `git push`와 다릅니다. |
+| Integration | 제안을 중앙에 통합합니다. PR Merge에 대응하는 단계입니다. |
+| Fetch | 공유 지식을 관찰·캐시하며 작업 상태와 통합 기준은 바꾸지 않습니다. |
+| Pull | 받아들인 중앙 변경을 자신의 지식 상태에 통합합니다. |
+| Checkout / Worktree | 지식 작업 브랜치와 작업 사본을 선택·조회합니다. 코드 checkout을 변경하지 않습니다. |
+
+Git은 커밋·브랜치·worktree와 이력 저장을 맡습니다. Lore는 무엇이 문서 변경인지, 어떤 공유 기준에 제안하는지, 무엇을 충돌로 보고 언제 받아들이는지를 정의합니다. Git 자체가 문서의 의미나 설명의 정확성을 판정하는 것은 아닙니다. 서버 인터페이스에서는 버전 토큰을 특정 Git 해시 형식으로 가정하지 않으며, 저장소 구현과 HTTP 공유 프로토콜도 분리합니다. [Git worktree](https://git-scm.com/docs/git-worktree), [Git remote](https://git-scm.com/book/en/v2/Git-Basics-Working-with-Remotes)
+
+일반적인 Git Index와 같은 **별도 Lore staging 단계는 현재 없습니다.** 작성·편집은 workspace에 기록된 미커밋 변경이고, `commit <id>`가 문서 하나 또는 Mapping 하나를 선택합니다. 다른 객체의 기록된 변경은 미커밋 상태로 남습니다. 편집기의 아직 저장하지 않은 텍스트도 별개입니다. 선택한 객체는 본문·메타데이터·Anchor를 포함한 기록된 상태로 커밋하므로 필드나 hunk를 부분 staging하는 동작은 아닙니다.
+
+```bash
+lore init
+lore --json --author agent create "Scheduler experiment" --body-file experiment.md
+lore commit <document-id> --if-match <revision>
+lore push
+lore --central show <document-id>
+```
+
+로컬 Push는 **작업 브랜치에 커밋된 변경을 함께 제안**합니다. `commit <id>`로 방금 선택한 객체만 제출한다는 뜻은 아니므로, 같은 브랜치의 이전 미제출 커밋도 확인해야 합니다. 기록 skill도 다른 작업의 커밋을 함께 게시하지 않도록 확인합니다. 아래의 팀 Push는 객체를 선택해 별도 제안을 구성한다는 점에서 제출 범위가 다릅니다.
+
+로컬의 기본 Push는 제안을 만든 뒤 충돌이 없으면 즉시 통합합니다. 이는 로컬 공유를 간편하게 하는 정책이며, **통합이 사람의 검토를 의미하지는 않습니다.** 먼저 제안만 남기려면 다음 흐름을 사용합니다.
+
+```bash
+lore push --proposal
+lore proposal show <proposal-id>
+lore proposal integrate <proposal-id> --if-match <central-version>
+```
+
+작업 상태는 `lore worktree`로 확인하고, `lore checkout investigation --create`로 별도의 지식 브랜치를 만들 수 있습니다. 미커밋 변경이 있으면 전환을 거부해 보존합니다. 다른 작업 브랜치는 `lore pull`로 중앙 변경을 반영하며, 충돌을 조용히 덮어쓰지 않습니다.
+
+### 팀에 선택적으로 제출하기
+
+```bash
+lore remote add team --url <server-url> --store <store-id>
+lore remote auth set team --stdin
+lore pull --remote team
+lore push --remote team --document <document-id>
+lore push --remote team --mapping-id <mapping-id>
+```
+
+원격 Push는 로컬 브랜치 전체를 전송하는 동작이 아닙니다. **마지막 성공한 원격 Pull의 기준 상태를 바탕으로, 선택한 객체를 local main의 현재 상태로 반영한 Proposal을 구성합니다.** 선택하지 않은 객체는 그 기준 상태를 유지하므로 로컬의 다른 문서·Mapping 변경이 함께 제출되지 않습니다. 미커밋 변경이나 외부 문서 본문도 포함하지 않습니다. `--all`은 명시적으로 모든 로컬 중앙 지식을 선택하는 동작입니다.
+
+서버는 그 제안의 기준과 제안 상태를 이력에 기록하고, Integration에서 현재 중앙과 비교합니다. 개인 브랜치의 Git 커밋을 팀 브랜치에 그대로 재현하거나 Git ref를 갱신하는 규약은 아닙니다. 서로 다른 객체의 변경은 함께 통합할 수 있지만, 같은 문서나 Mapping을 동시에 수정하면 충돌로 남깁니다. 문서 안의 서로 다른 문장을 수정했다고 자동으로 합치지는 않습니다.
+
+제안, 기준 상태, 중앙 상태를 비교해 해결안을 만들고, 적용할 때 관찰한 상태가 여전히 같은지 확인합니다. 재시도해도 같은 제출을 중복 게시하지 않으며, 작업 중 발생한 로컬 편집을 잃지 않아야 합니다. **Push 성공, 중앙 통합, 작업 브랜치 반영은 서로 다른 결과**입니다.
+
+`lore proposal --remote team show ...`와 `integrate ...`로 원격 제안을 확인·통합합니다. `lore pull --remote team`은 팀 결과를 local main에 반영하고, 작업 브랜치는 다시 `lore pull`로 반영합니다. 이때 서버 reconciliation은 코드 참조를 보정하는 선택적 역할이며, Proposal 생성이나 지식 통합 그 자체가 아닙니다.
+
+## 독립적인 지식 공간과 선택적 공유
+
+하나의 팀 위키를 모든 사용자에게 강제하지 않습니다. **독립적인 Knowledge store를 운영하고, 어느 공간의 변경을 다른 공간에 공유할지 선택**할 수 있습니다. 팀별·조직별 지식뿐 아니라 개인 연구와 Agent의 실험 지식을 같은 구조로 관리하는 것이 주요 설계 장점입니다.
+
+예를 들어 Agent가 대량 생산하는 조사·가설은 별도의 실험 store와 `agent-lab` remote에 축적하고, 팀의 `team` remote에는 선택한 문서나 Mapping만 제안할 수 있습니다. 자유롭게 지식을 생산하는 공간과 팀에 받아들이는 경계를 분리하는 방법입니다. 앞의 local main → 팀 중앙 관계를 여러 독립 공간에 적용합니다.
+
+이 구조를 Agent 전용 공간으로 활용하는 것은 운영 정책입니다. Lore가 특정 품질 등급이나 필수 승격 계층을 정하는 것은 아닙니다. store 분리와 선택적 제출은 실제로 제공하는 메커니즘이고, 기록 대상·제출 시점·검토자는 Hook·skill·팀 정책이 결정합니다.
+
+remote만 나눴다고 사람이 보는 지식이 자동으로 분리되지는 않습니다. VS Code는 선택한 로컬 store의 중앙 지식을 보므로, 사람에게 노출하기 전 선별하려면 작업에 사용하는 로컬 store와 연결·발견 범위도 함께 정해야 합니다. 여러 remote에서 가져온 내용을 같은 local main에 통합하면 한 화면에 나타날 수 있습니다. 현재 모든 경로에 자동 품질 필터나 승격 UI가 있는 것은 아닙니다.
+
+### 출처, 통합, 검토는 다른 사실입니다
+
+| 사실 | 알 수 있는 것 | 추론할 수 없는 것 |
 | --- | --- | --- |
-| 문서 탐색 | Notion과 Local Documents를 트리에서 찾고 코드 옆에서 읽습니다. | VS Code 내장 reader, 제목 필터와 정규식, 문서 링크 탐색 |
-| 코드 연결 | 문서를 코드 줄 범위 또는 파일 glob에 연결합니다. | Mapping 작성·조회·이력, 선택한 문서의 연결 목록, CodeLens |
-| 코드 대응 | 이전 revision의 연결을 현재 코드 위치에 대조합니다. | 정확한 텍스트·Git rename 대응, 선택적 모델 후보 생성 |
-| Agent 문맥 | 코드 경로가 등장하면 관련 문서 목록을 소개합니다. | 실행형 Hook, 세션 중복 방지, 교체 가능한 읽기·기록 skill |
-| 로컬 문서 | Markdown을 작성하고 링크·디렉터리·이력·Archive를 관리합니다. | CLI와 확장 편집, 작업 사본과 중앙 지식 구분 |
-| 지식 공유 | worktree별로 커밋하고 로컬 중앙이나 팀에 변경을 제출합니다. | 독립된 Lore worktree, 제안·통합, Fetch/Pull/Push, HTTP 서버 |
-| 다양한 본문 형식 | Jupyter notebook처럼 코드·설명·실험 결과를 함께 담습니다. | **지원 예정:** `.ipynb`를 포함한 추가 형식의 읽기·편집 |
+| 작성·수정 출처 | 사람 또는 Agent가 기여했다는 기록 | 사람이 내용을 검토했거나 설명이 옳다는 보장 |
+| 중앙 통합 | 해당 공간의 공유 상태에 받아들여짐 | 검토 완료 또는 높은 품질 |
+| 사람의 검토 | 명시적으로 확인한 내용과 범위 | 다른 revision이나 바뀐 코드에도 같은 판단이 적용됨 |
 
-아래 CLI의 `<...>`는 사용자가 채울 ID나 값입니다. Notion 예시는 연결과 접근 권한이 준비된 환경을 가정하며, 명령은 작업 대상 코드 checkout에서 실행합니다.
+사람이 작성하거나 수정했다는 사실을 검토 기록으로 대신하지 않습니다. 검토 상태를 표현할 때도 출처나 통합 상태와 독립적으로 다뤄야 합니다. **현재 별도의 초안·미검증·검토 완료 상태 모델과 검토 필터는 구현하지 않았습니다.** 화면의 Central 표시나 human 출처를 Reviewed로 읽어서는 안 됩니다.
+
+로컬 기본 Push와 현재 기록 skill은 비충돌 지식을 자동 통합할 수 있습니다. 사람이 보기 전에 선별하려는 환경에서는 proposal-only 제출이나 별도 실험 store를 사용하는 정책이 필요합니다. 별도 공간은 선별할 경계를 제공하지만, 분리나 통합 자체가 지식의 품질을 보증하지 않습니다.
 
 ## 문서 탐색과 읽기
 
@@ -22,9 +137,7 @@ Lore는 외부 문서를 읽고, 문서와 코드의 관계를 기록하고, 그
 
 Notion 본문은 Markdown preview로 읽습니다. Notion 고유 블록과 원본 편집이 필요하면 Open in Notion으로 이동합니다. 문서 상단에는 제공 가능한 마지막 수정 시각, 생성자, 마지막 수정자를 표시합니다.
 
-화면은 통합된 로컬 중앙 지식을 기준으로 탐색합니다. 작업 중인 저장 내용은 working copy로 구분하고, 게시할 때 중앙에 제출합니다. 누군가 다른 worktree에서 초안을 저장했다는 이유만으로 중앙 목록이 즉시 바뀌지는 않습니다.
-
-읽을 때는 캐시를 우선 사용합니다. 목록을 갱신하는 일, 문서 한 개의 최신 본문을 가져오는 일, Lore의 공유 변경을 통합하는 일은 다릅니다. 문서를 열 때마다 Notion 전체를 탐색하거나, 목록을 새로고침할 때 모든 본문을 다시 받는 경험은 피하려고 합니다. 외부 문서의 캐시는 worktree 사이에서 공유할 수 있지만, 편집 초안과 코드 projection은 공유 작업 상태가 아닙니다.
+읽기는 캐시를 우선 사용하고, 캐시가 없을 때 본문을 가져옵니다. 캐시된 내용은 원본보다 오래되었을 수 있습니다. 목록·문서 본문 갱신과 Lore 지식의 Pull은 뒤에서 설명하는 별개의 동작입니다.
 
 ![Notion 문서의 제목 필터, 코드 연결 목록, 내장 reader](images/vscode-notion-document.png)
 
@@ -54,7 +167,7 @@ lore docs fetch notion
 
 이 경험의 목적은 코드에서 문서로 이동한 뒤 관련 문서와 코드로 읽기를 이어가는 것입니다. 나무위키처럼 문서 사이를 타고 배경을 알아가는 경험을 지향합니다. 문서가 코드 한 줄에 연결되어야만 읽을 가치가 생기는 것은 아닙니다.
 
-## 코드 연결과 Projection
+## Mapping과 worktree별 Projection
 
 Mapping에는 “이 문서는 이 코드의 배경이다”라는 관계를 남깁니다. 외부 문서 매핑은 백엔드와 문서 ID를 참조하며, 하나의 코드 저장소 안에서 여러 Anchor나 파일 범위를 가질 수 있습니다. Lore-owned 문서에는 Anchor를 직접 붙일 수도 있습니다.
 
@@ -80,6 +193,18 @@ Anchor는 파일 경로와 한 줄 또는 여러 줄의 범위뿐 아니라 **�
 
 Projection은 원본 Anchor를 현재 코드에 대조합니다. 예를 들어 중앙의 `scheduler.py`가 로컬 feature 브랜치에서 `planner.py`로 이동했다면, 원본 참조는 그대로 두고 로컬의 대응 위치를 별도로 제시합니다. 함수가 분리되면 여러 위치가 함께 대응할 수 있고, 여러 후보 중 하나를 확정하지 못할 수도 있습니다. 대응 위치를 찾지 못하는 것도 정상적인 결과입니다.
 
+### 다른 worktree에서 만들어진 연결 읽기
+
+Agent A가 feature 브랜치의 커밋 `A`에서 `planner.py:120–170`에 Anchor를 만들고, 그 Mapping을 커밋·Push했다고 합시다. local main에 통합되는 것은 **문서 관계와 커밋 `A`의 원본 Anchor**입니다. Agent A의 화면용 Projection을 다른 worktree의 정답으로 병합하지 않습니다.
+
+| 읽는 환경 | 공유하는 원본 | 해당 환경의 Projection |
+| --- | --- | --- |
+| Agent A의 feature worktree | 커밋 `A`, `planner.py:120–170` | 같은 코드의 대응 위치 |
+| 사람의 오래된 master checkout | 동일한 원본 Anchor | 예를 들어 `scheduler.py:100–150` |
+| Agent B의 다른 브랜치 | 동일한 원본 Anchor | 그 브랜치의 대응 위치, 여러 후보 또는 미해결 |
+
+B는 Pull로 지식 변경을 반영하거나 중앙 지식을 직접 발견할 수 있고, 코드를 연결해서 읽을 때 자신의 코드 상태에 대응시킵니다. **지식 통합과 Code Projection은 독립적**입니다. 중앙에 받아들였다고 모든 checkout의 코드 위치를 확정한 것도 아니고, B의 Projection이 없다고 Mapping 통합에 실패한 것도 아닙니다. 표는 대응을 찾았을 때의 예시이며, 실제로 대응이 가능하다고 항상 보장하지 않습니다.
+
 이 분리는 중요한 두 가지 오해를 막습니다.
 
 1. **현재 위치를 찾았다고 원래 참조가 바뀐 것은 아닙니다.** 다른 worktree는 다른 코드 상태에 대한 projection을 가질 수 있습니다.
@@ -93,9 +218,9 @@ Projection은 원본 Anchor를 현재 코드에 대조합니다. 예를 들어 �
 lore --json map resolve <mapping-id> --resolver model --path compiler/
 ```
 
-서버 측 reconciliation은 같은 문제를 공유 기준 코드에 대해 다루는 역할입니다. 제출된 참조를 설정된 canonical ref, 예를 들어 `upstream/master`에 대응시킬 수 있습니다. 그 ref는 모든 사용자의 로컬 코드 상태를 강제하는 기준이 아닙니다. 대응하지 못하면 원본과 불확실성을 보존하고, 문서 본문을 재작성하지 않습니다. 이 역할은 현재 후속 구현 범위입니다.
+서버 reconciliation은 같은 참조를 공유 기준 코드에 대응시키는 후속 기능입니다. Push/Integration과의 경계는 서버 절에서 설명합니다.
 
-## Agent 문맥과 자동 소개
+## Agent의 문맥과 기록 정책
 
 Agent는 자동 소개를 받거나 CLI로 필요한 경로의 관계를 직접 조회할 수 있습니다. Discovery는 문서 본문 전체를 읽는 작업과 구분됩니다.
 
@@ -110,9 +235,21 @@ Agent도 사람과 같은 관계를 사용하지만, 발견을 위한 인터페�
 
 자동 소개는 본문 전체를 무조건 주입하지 않습니다. **관련 Lore가 있다는 사실, 문서 참조, 기록된 코드 범위**를 먼저 전달하고, Agent가 필요한 문서를 선택해 읽게 합니다. 라인은 참조 당시 위치일 수 있으므로 현재 코드와의 대응이 필요하면 Projection을 조회합니다. 같은 Agent 세션에서는 문서를 자동으로 최대 한 번 소개하고, 명시적 discovery와 읽기는 언제든 허용합니다.
 
-Hook, skill, resolver는 서로 다른 책임을 가집니다. Hook은 발견 계기와 중복 방지를 담당하고, skill은 Lore를 읽고 활용하거나 새 결론을 기록하는 작업 방식을 안내하며, resolver는 코드 대응을 해석합니다. 특정 언어의 skill이나 특정 모델의 프롬프트를 제품의 핵심 계약으로 고정하지 않습니다.
+### 기록 시점은 Hook·skill 정책이 결정합니다
 
-현재 실행형 adapter는 SessionStart에서 workspace를 준비하고, PostToolUse에서 관련 문서 참조를 소개합니다. 선택적으로 사용하는 Stop Hook은 재사용할 새 결론이 생겼는지 점검하도록 요청합니다. 읽기 skill과 기록 skill은 분리되어 있고, 기록 정책에 따라 작업 브랜치에서 문서를 작성·커밋한 뒤 로컬 중앙에 제출합니다. Hook 자체가 대화를 문서로 변환하거나 모델을 호출하는 것은 아닙니다. 팀 remote로의 제출은 별도의 동작입니다.
+Lore CLI는 작성·선택적 Commit·Push·Integration을 제공합니다. Hook은 실행 계기를, skill은 기록 여부와 제출 방식을 정합니다. CLI가 문서 생성 직후 자동으로 커밋하거나 팀에 제출하는 규칙을 내장하지는 않습니다.
+
+| 현재 adapter의 계기 | 메커니즘과 기본 정책 |
+| --- | --- |
+| SessionStart | workspace를 준비하고 목록 갱신을 예약합니다. |
+| PostToolUse | 경로 언급에서 관련 문서 참조를 소개하고 세션 중복을 방지합니다. 본문 작성이나 Commit은 하지 않습니다. |
+| 선택적 Stop Hook | 턴 종료 시 재사용할 새 지식이 있는지 Agent에게 점검을 요청합니다. |
+| 현재 기록 skill | 새 결론이 있으면 작성·수정하고, 선택한 문서를 Commit한 뒤 로컬 Push합니다. 새 지식이 없으면 기록하지 않습니다. |
+| 명시적 기록 요청 | Stop을 기다리지 않고 같은 기록 skill을 사용하거나 CLI 작업을 직접 수행할 수 있습니다. |
+
+현재 기본 정책에서는 Stop 요청 → Agent의 기록 판단 → 문서 작성 → Commit → 로컬 Push가 이어지고, 충돌이 없으면 local main에 나타납니다. 충돌이 있으면 제안을 남기며 자동으로 해결하지 않습니다. **Hook 스크립트가 문서를 생성하거나 Push하는 것은 아니며, Agent가 skill에 따라 실행합니다.** 팀 remote 제출은 별도 지시가 있어야 합니다.
+
+기록 skill은 proposal-only 제출이나 별도 store에 기록하는 정책으로 교체할 수 있습니다. Hook, 읽기 skill, 기록 skill, 코드 대응 resolver의 책임도 분리되어 있으므로, 특정 언어의 안내나 모델 프롬프트를 제품의 고정 규칙으로 삼지 않습니다.
 
 이렇게 분리하면 Agent가 기존 Notion 도구로 문서를 읽는 경우에도 코드 관계는 Lore에 남길 수 있습니다. 새 실험 결론을 Lore-owned 문서로 남기거나, 기존 문서에 매핑만 추가하는 것도 가능합니다. 현재 Agent 연결의 중심은 구조화된 CLI 결과와 실행형 Hook·skill이고, MCP 같은 인터페이스도 같은 작업 의미를 따르는 방향입니다.
 
@@ -129,10 +266,6 @@ lore history <document-id>
 
 편집·Archive 같은 변경은 관찰한 revision을 확인합니다. 다른 작업자가 먼저 변경했다면 내용을 조용히 덮어쓰지 않습니다. 생성·수정 결과의 revision을 다음 작업에 사용합니다.
 
-![Local Documents의 디렉터리, 코드 연결, Markdown reader](images/vscode-local-document.png)
-
-*설명용 로컬 문서의 실제 확장 화면입니다. 문서는 아래 reader에 렌더링되고, Edit로 본문을 수정합니다. Saving은 작업 사본을 기록하고 Publishing은 커밋과 로컬 중앙 제출을 수행합니다.*
-
 문서는 제목과 본문을 가진 지식이며, 코드 연결 없이도 존재할 수 있습니다. 문서 참조는 백엔드의 정체성과 그 안의 문서 ID로 구성됩니다. 제목은 읽기 위한 이름이므로 중복될 수 있고, 제목이나 위치를 바꿔도 같은 문서의 연결은 유지됩니다. 다른 백엔드로 복사한 문서는 별도의 문서이며 자동으로 같은 원본으로 간주하지 않습니다.
 
 Lore가 소유하는 문서는 Markdown을 기본 형식으로 사용합니다. 형식을 Markdown으로만 고정하지 않아 향후 **Jupyter notebook (`.ipynb`)** 같은 내용을 지원할 계획이지만, 모든 형식의 읽기·편집을 현재 지원하는 것은 아닙니다. 외부 문서는 원래 백엔드가 제공하는 본문 형식과 편집 기능을 따릅니다.
@@ -148,92 +281,6 @@ Archive도 삭제와 다릅니다. Lore-owned 문서를 archive하면 정체성,
 CLI의 `archive`와 `restore`도 관찰한 revision을 `--if-match`로 확인합니다. 문서 사이의 연결은 `links`로 조회할 수 있습니다.
 
 위키 링크는 예를 들어 `[[id:<document-id>|Resource Ownership]]`처럼 표현합니다. 보이는 제목과 실제 문서 ID를 분리하므로 제목이나 디렉터리를 바꿔도 연결을 유지할 수 있습니다.
-
-## worktree 작업과 지식 공유
-
-각 코드 worktree는 독립된 Lore 작업 브랜치와 작업 사본을 가집니다. 작성과 커밋은 해당 작업 환경에 남고, 로컬 중앙에 제출·통합한 지식은 중앙 화면과 다른 작업자에게 발견됩니다. 다른 브랜치의 내용은 Pull로 반영합니다.
-
-Lore는 다음 계층을 같은 제출·통합 규칙으로 연결합니다.
-
-```mermaid
-flowchart TD
-    T["팀 중앙 Knowledge store<br/>Lore remote의 대상"]
-    A["사람 A의 로컬 중앙 지식"]
-    B["사람 B의 로컬 중앙 지식"]
-    A1["Agent A1 또는 사람의 작업<br/>코드 worktree ↔ Lore worktree"]
-    A2["Agent A2의 작업<br/>코드 worktree ↔ Lore worktree"]
-    B1["Agent B1의 작업<br/>코드 worktree ↔ Lore worktree"]
-    B2["Agent B2의 작업<br/>코드 worktree ↔ Lore worktree"]
-    T <-->|"Pull / Push와 통합"| A
-    T <-->|"Pull / Push와 통합"| B
-    A <-->|"Pull / Push와 통합"| A1
-    A <-->|"Pull / Push와 통합"| A2
-    B <-->|"Pull / Push와 통합"| B1
-    B <-->|"Pull / Push와 통합"| B2
-```
-
-Agent는 자기 코드 worktree에 대응하는 Lore worktree에서 독립적으로 작업합니다. 커밋은 그 작업 브랜치의 이력을 만들고, Push는 로컬 중앙에 변경을 제안합니다. 중앙에 통합되면 사람의 VS Code 화면에서 발견할 수 있고, 다른 작업 브랜치는 Pull로 반영합니다.
-
-사람의 로컬 중앙은 Agent들에게는 공유 대상이지만, 팀 중앙에 대해서는 변경을 제출하는 쪽입니다. 로컬 중앙에 받아들인 지식 중 팀에 공유할 것을 선택해 Lore remote에 제출합니다. 팀에서 받아들인 변경도 먼저 각 사람의 로컬 중앙으로 가져온 뒤, 필요한 작업 브랜치가 반영합니다.
-
-그림은 하나의 공유 대상을 보여주지만, 사람마다 여러 Lore remote를 사용할 수 있습니다. 팀 store와 개인 store, 실험용 store가 함께 존재할 수 있습니다. 하나의 remote를 연결했다는 이유로 모든 로컬 문서를 그곳에 보내지는 않습니다.
-
-### 저장, 커밋, 제출, 통합
-
-작업 내용을 저장하고, 이력으로 기록하고, 공유 대상으로 제출하고, 중앙에 받아들이는 일은 서로 다른 단계입니다. Lore는 이 차이를 드러냅니다.
-
-| 작업 | 의미 |
-| --- | --- |
-| 작성·편집 | workspace의 로컬 변경을 기록합니다. 다른 브랜치나 중앙에 자동 게시하지 않습니다. |
-| Commit | 선택한 문서 또는 매핑을 Lore 작업 브랜치의 이력에 기록합니다. |
-| Push | 커밋된 변경을 부모 중앙에 제안합니다. 제출과 통합은 구분됩니다. |
-| Integration | 제안을 확인한 중앙 상태에 대해 통합합니다. 같은 문서나 매핑의 동시 변경은 충돌로 남깁니다. |
-| Fetch | 공유 지식을 가져와 관찰·캐시하지만, 작업 브랜치나 통합 기준을 바꾸지 않습니다. |
-| Pull | 받아들여진 공유 변경을 자신의 상태에 통합합니다. 로컬 편집을 조용히 덮어쓰지 않습니다. |
-| Checkout / Worktree | 지식 작업 브랜치를 선택하거나, 코드 checkout에 대응하는 독립된 작업 환경을 제공합니다. |
-
-작업 상태는 `lore worktree`로 확인하고, `lore checkout investigation --create`로 별도의 지식 작업 브랜치를 만들 수 있습니다. 코드 checkout 자체를 바꾸는 명령은 아닙니다. 미커밋 변경이 있다면 브랜치 전환을 거부해 보존합니다.
-
-로컬 Push는 충돌이 없으면 즉시 통합할 수 있고, 제안만 남길 수도 있습니다. 팀 remote로 Push하면 제출된 제안을 별도로 통합합니다. 중앙에 통합되었다는 것은 공유 상태에 포함되었다는 뜻이며, 반드시 사람이 검토했거나 설명의 정확성을 보증한다는 뜻은 아닙니다.
-
-앞서 작성한 Mapping을 커밋해 로컬 중앙에 제출하는 대표적인 흐름은 다음과 같습니다. `<mapping-id>`와 `<revision>`은 작성·조회 결과에서 얻습니다.
-
-```bash
-lore commit <mapping-id> --mapping --if-match <revision>
-lore push
-lore --central map ls compiler/scheduler.py
-```
-
-Lore-owned 지식은 `create`, `attach`, `show`로 다루고 같은 commit·제출 흐름을 사용합니다. 파일 범위의 관계는 `map create ... --glob 'src/scheduler/**'`로 기록할 수 있습니다. 사람과 Agent가 다른 도구를 사용하더라도 같은 workspace 상태와 충돌 규칙을 따릅니다. `--json`과 `--if-match`는 결과를 구조적으로 읽고, 관찰한 버전이 바뀌었을 때 무심코 덮어쓰지 않게 하는 인터페이스입니다.
-
-제안만 남기고 먼저 확인하는 흐름도 가능합니다.
-
-```bash
-lore push --proposal
-lore proposal show <proposal-id>
-lore proposal integrate <proposal-id> --if-match <central-version>
-```
-
-공유 범위는 명시적으로 선택합니다. `push --remote team --mapping-id <id>`는 선택한 로컬 중앙 매핑을 팀에 제안하고, `--document <id>`는 Lore-owned 문서를 제안합니다. `pull --remote team`은 팀 변경을 로컬 중앙에 반영하며, 작업 브랜치에서는 별도의 `pull`로 가져옵니다. `fetch --remote team`은 중앙에 통합하지 않고 먼저 관찰할 때 사용합니다.
-
-팀 공유를 시작할 때는 서버의 store와 인증 정보를 받아 Lore remote를 연결합니다. 처음에는 Pull로 팀의 기준 상태를 가져온 뒤 선택한 지식을 제출합니다.
-
-```bash
-lore remote add team --url <server-url> --store <store-id>
-lore remote auth set team --stdin
-lore pull --remote team
-lore push --remote team --mapping-id <mapping-id>
-```
-
-원격 제안도 `lore proposal --remote team show ...`와 `integrate ...`로 확인·통합합니다. `lore fetch --remote team`은 관찰만 하고, `lore pull --remote team`은 받아들여진 지식을 로컬 중앙에 반영합니다. 작업 브랜치에서는 다시 `lore pull`을 사용합니다.
-
-Notion에 대한 `docs fetch`는 이 지식 공유와 별개입니다. 백엔드의 목록이나 선택한 본문을 갱신하는 작업입니다. Notion 문서를 읽기 위해 Lore remote에 Push할 필요도 없고, 매핑을 Push한다고 Notion 본문이 편집되는 것도 아닙니다.
-
-충돌한 제안과 로컬 내용, 기준 버전은 보존합니다. Agent가 해결안을 만들 수 있지만 적용은 명시적이어야 하고, 그동안 상태가 바뀌었다면 다시 확인해야 합니다. 네트워크 응답이 불확실해 재시도하더라도 게시가 중복되거나 로컬 변경이 사라지지 않는 것이 공유 계약의 일부입니다.
-
-예를 들어 두 Agent가 같은 기준에서 서로 다른 문서를 추가했다면 중앙은 두 변경을 함께 받아들일 수 있습니다. 같은 문서나 Mapping을 각각 수정했다면, 나중 제안을 먼저 내용을 덮어쓰는 방식으로 받아들이지 않습니다. 현재 병합의 단위는 문서 또는 Mapping이며, 한 문서 안의 서로 다른 문장을 고쳤다고 자동으로 합치지는 않습니다.
-
-해결할 때는 기준 상태, 현재 중앙 상태, 제안 상태를 비교해 새 내용을 준비하고, 관찰한 상태가 여전히 같은지 확인한 뒤 적용합니다. Push에 성공했다는 것은 제안이 서버에 남았다는 뜻일 수 있습니다. 제안의 통합과 이후 Pull까지 구분해야 다른 작업자에게 무엇이 보이는지 알 수 있습니다.
 
 ## 구성 요소와 연결 이름
 
@@ -274,6 +321,22 @@ flowchart LR
 
 Workspace는 관련 문서를 찾을 때 로컬 중앙 지식과 알려진 원격 관계를 조회하고, 본문을 읽을 때 문서 캐시나 원래 백엔드를 사용합니다. 서버는 팀의 공유 상태를 관리하며, 외부 문서에 대한 개인 인증을 대신 부여하는 역할은 아닙니다. 그림의 Resolver는 필요할 때 호출하며 모든 읽기나 동기화에 개입하지 않습니다.
 
+## 가져오기, 캐시, 작업 상태 반영
+
+**지식이 원격에 존재하는 것, 로컬에 가져온 것, 현재 작업 상태에 반영한 것은 서로 다른 상태**입니다. Git을 작업 이력과 통합의 주된 모델로 삼고, DVC는 Fetch/Pull과 캐시 분리에 참고합니다.
+
+| 동작 | 로컬에서 관찰 가능한 것 | 그대로 두는 것 |
+| --- | --- | --- |
+| `fetch --remote team` | 가져온 팀 지식 | local main과 작업 브랜치, 통합 기준 |
+| `pull --remote team` | local main에 통합한 팀 결과 | 각 작업 브랜치의 독립 상태 |
+| 작업 브랜치의 `pull` | 자신의 브랜치에 반영한 중앙 변경 | 미완성 로컬 편집은 보존하며 충돌을 구분 |
+| `docs fetch notion` | 갱신한 제목·발견 목록 | 모든 문서 본문을 일괄 갱신하지 않음 |
+| `docs fetch notion <page-id>` | 갱신한 문서 한 개 | Lore의 지식 브랜치와 통합 기준 |
+
+Fetch했다고 작업 브랜치가 바뀌지 않고, 원격 지식을 알고 있다고 local main에 받아들인 것도 아닙니다. 실패하거나 취소한 갱신은 이전 캐시를 버리는 이유가 되지 않으며, 실패와 성공한 빈 결과를 구분합니다. 캐시는 worktree 사이에서 공유할 수 있지만 편집 변경과 현재 코드에 대한 Projection은 독립 상태입니다.
+
+DVC의 [Fetch](https://doc.dvc.org/command-reference/fetch)는 데이터를 캐시에 가져오고, [Pull](https://doc.dvc.org/command-reference/pull)은 작업 사본에 반영합니다. 이 직관을 참고하되 Lore는 문서·관계의 이력과 제안·통합도 다루므로 같은 프로토콜은 아닙니다. 선택적 제출과 코드 범위 discovery를 제공하지만, 모든 원격 지식을 파일별로 잘라 전송하는 기능까지 현재 지원하지는 않습니다. Lore-owned 원격 Fetch에는 본문이 포함될 수 있습니다.
+
 ## 공유 서버와 선택적 reconciliation
 
 공유 서버가 필요하다면 CLI로 설정을 만들고 실행할 수 있습니다. 서버 하나는 여러 store를 제공할 수 있으며, 각 사용자의 repository/backend 조합에 대한 읽기·쓰기 권한을 확인합니다.
@@ -288,7 +351,9 @@ lore server serve --config server.json --data-dir "<data-directory>"
 
 Lore server는 공유 공간의 서비스입니다. 저장소를 선택하고, 요청자를 인증하고, 변경 제안을 받아 통합하는 역할은 모델의 지능에 의존하지 않습니다.
 
-별도의 Agent나 worker는 코드 변화에 따라 공유 Anchor를 보정하거나, 오래된 관계를 조사하고 정리하는 역할을 맡을 수 있습니다. 하지만 이런 Agent가 없거나 일시적으로 동작하지 않는다고 Push/Pull까지 멈추게 만들지는 않습니다. 원래 참조를 보존한 채 공유하고, 대응이 해결되지 않은 상태를 구분할 수 있어야 합니다.
+Push는 지식 변경 제안을 저장하고, Integration은 그 제안을 공유 이력에 받아들입니다. **Reconciliation은 제출된 코드 참조를 canonical ref에 대응시키는 별도의 역할**입니다. 예를 들어 `upstream/master`에 대응하는 위치를 기록할 수 있지만, 모든 사용자의 코드 checkout을 그 ref에 맞추거나 문서 본문을 다시 쓰지 않습니다. 대응하지 못하면 원본과 미해결 상태를 보존합니다. 서버의 상시 reconciliation worker는 아직 후속 범위입니다.
+
+별도의 Agent나 worker는 이 코드 대응을 보정하거나 오래된 관계를 조사하는 역할을 맡을 수 있습니다. 하지만 이런 Agent가 없거나 일시적으로 동작하지 않는다고 Push/Pull까지 멈추게 만들지는 않습니다. 원래 참조를 보존한 채 공유하고, 대응이 해결되지 않은 상태를 구분할 수 있어야 합니다.
 
 서버 자체가 내려가면 원격 제출은 할 수 없습니다. 그래도 이미 가진 문서와 관계를 읽고, 로컬 작업을 기록·커밋하고, 로컬 중앙에 제출하는 일은 계속할 수 있습니다. 모델이 필요한 새로운 Projection이나 아직 가져오지 않은 외부 문서까지 오프라인에서 제공한다고 약속하는 것은 아닙니다.
 
@@ -342,18 +407,6 @@ Remote SSH로 코드 작업을 한다면 CLI와 Hook이 실행되는 원격 호�
 
 Notion 문서를 연결하는 작업은 Notion 본문을 복제해 게시하는 작업이 아닙니다. Lore-owned 문서를 공유할 때는 Lore가 그 본문과 이력을 관리하지만, 외부 문서를 공유할 때는 참조와 코드 관계를 공유합니다. 문서 제목이 같다고 같은 문서로 합치거나, 매핑을 볼 수 있다는 이유로 본문 접근 권한을 부여하지 않습니다.
 
-## Git과 DVC에서 가져온 생각
-
-Git과 닮은 점은 작업 이력과 공유의 경계를 나눈다는 것입니다. 독립된 작업 브랜치, 커밋, 기준 버전, 제출과 통합을 통해 여러 작업자의 변경을 관리합니다. 코드 worktree와 지식 worktree를 대응시키는 선택도 [Git worktree](https://git-scm.com/docs/git-worktree)의 독립된 작업 사본이라는 생각과 맞닿아 있습니다.
-
-그러나 코드 커밋과 Lore 커밋은 같은 이력이 아니고, Git remote와 Lore remote도 같은 대상이 아닙니다. 특히 Lore의 remote Push는 제안을 만들기 때문에, Git의 브랜치 전송과 동작이 동일하지 않습니다. [Git의 remote 개념](https://git-scm.com/book/en/v2/Git-Basics-Working-with-Remotes)에서 익숙한 연결 이름과 여러 공유 대상을 사용하는 감각을 가져오되, Lore의 제출·통합 의미는 별도로 정의합니다.
-
-현재 Git은 Lore의 이력과 worktree를 구현하는 수단입니다. Knowledge store 인터페이스와 공유 프로토콜은 별도로 두고, 저장소 버전 토큰을 외부 계약에서 Git 해시로 가정하지 않습니다. 지식을 GitHub에 게시하거나 Git 프로토콜로 전송해야 한다는 뜻도 아닙니다. 현재 Lore server는 HTTP API로 제안을 받습니다.
-
-DVC와 닮은 점은 원본·캐시·작업 상태를 구분하고 필요한 범위를 의식한다는 것입니다. DVC의 [Fetch](https://doc.dvc.org/command-reference/fetch)는 데이터를 캐시에 가져오고, [Pull](https://doc.dvc.org/command-reference/pull)은 작업 사본에도 반영하며 대상을 제한할 수 있습니다. Lore에서도 “가져와서 알게 되었다”와 “내 작업 상태에 반영했다”를 구분하고, 코드 파일이나 디렉터리에서 필요한 지식을 찾고자 합니다.
-
-다만 이것은 DVC와 동일한 다운로드·checkout 규약이라는 뜻은 아닙니다. 외부 문서의 원본과 편집 계약은 백엔드에 남고, Lore는 지식 변경과 코드 관계를 통합합니다. 파일별로 모든 원격 지식을 잘라 전송하는 기능까지 현재 구현했다고 가정해서도 안 됩니다. 현재 범위 선택은 코드 기반 discovery, 외부 본문의 지연 조회, 선택적 원격 제출을 중심으로 제공하며, Lore-owned 원격 지식의 Fetch는 본문을 포함할 수 있습니다.
-
 ## Swimm, Google Code Wiki와의 차이
 
 코드 옆에서 설명을 발견하고 문서와 코드를 오가는 경험은 다른 도구들과 겹칩니다. Lore의 방향을 설명할 때는 기능의 유무보다 지식의 원본, 이력, 공유를 어디에 두는지에 주목할 필요가 있습니다.
@@ -368,19 +421,11 @@ Swimm의 코드 연계 방식을 소스코드 줄 안에 문서를 주석으로 
 
 Google은 Code Wiki를 코드베이스를 분석해 변경에 맞춰 문서를 재생성하고, 코드 링크와 Gemini 기반 질의응답을 제공하는 시스템으로 소개합니다. Lore 역시 코드 이해를 돕지만, 선택의 이유나 실패한 실험처럼 코드에서 다시 생성하기 어려운 지식을 출발점으로 삼습니다. 따라서 생성 위키를 대체해야만 하는 관계는 아니며, 기존 지식에 대한 연결 계층과 함께 활용하는 방향도 생각할 수 있습니다. [Google의 Code Wiki 소개](https://developers.googleblog.com/en/introducing-code-wiki-accelerating-your-code-understanding/)
 
-## Agent 전용 remote라는 운영 아이디어
-
-Agent가 작성하는 문서가 많아지면 팀의 공유 지식과 실험 기록을 구분하고 싶을 수 있습니다. 예를 들어 팀의 `team` remote와 별도로 `agent-lab` remote를 두고, Agent의 조사 결과와 가설을 모은 뒤 필요한 것만 팀 공간에 제안하는 방식입니다.
-
-이것은 Lore의 필수 계층이나 고정된 문서 등급이 아닙니다. 여러 store와 remote, 선택적 제출을 이용하는 **운영 아이디어**입니다. 어떤 Agent가 어디에 기록할지, 사람이 언제 검토할지, 무엇을 승격할지는 Hook·skill·팀 정책으로 결정할 수 있습니다. remote를 선택해 읽는 범위와 제출 대상을 구분해야 하며, 분리했다고 검색 결과나 품질 등급이 자동으로 정해지는 것은 아닙니다.
-
-Agent가 썼다는 사실과 지식이 정확하거나 팀에 유용하다는 판단도 다른 문제입니다. 공유 공간을 나누는 방법은 그 판단을 위한 작업 흐름을 만들 수 있지만, 자동 생성 내용을 검증된 결론으로 바꾸지는 않습니다. Lore는 특정 정책을 강제하기보다 그런 정책을 구현할 수 있는 경계를 제공합니다.
-
 ## 현재 범위와 지원 계획
 
 현재 구현에서는 Notion 연결과 캐시된 문서 탐색, Local Documents, 코드 매핑과 로컬 Projection, VS Code·CLI·Agent Hook, 독립된 Lore worktree, 로컬 중앙 통합과 HTTP 기반 원격 제안·통합을 사용할 수 있습니다. 일반 탐색과 동기화는 모델 없이 가능하고, 모델 기반 Projection은 선택적으로 사용합니다.
 
-**Jupyter notebook (`.ipynb`) 본문과 추가 문서 형식 지원**, 서버의 상시 reconciliation worker, 더 세밀한 원격 부분 조회, 더 풍부한 위키 탐색과 추가 문서 백엔드는 발전시킬 영역입니다. 이미 구현된 경험과 앞으로 지향하는 경험을 구분하면서, 원본 보존·작업 격리·명시적 통합이라는 경계를 유지하려고 합니다.
+**Jupyter notebook (`.ipynb`) 본문과 추가 문서 형식 지원**, 서버의 상시 reconciliation worker, 더 세밀한 원격 부분 조회, 더 풍부한 위키 탐색과 추가 문서 백엔드는 발전시킬 영역입니다. 출처와 별개인 검토 기록·상태 및 공간별 선별 경험도 구체화할 영역이며, 현재 제공하는 품질 등급으로 가정하지 않습니다. 이미 구현된 경험과 앞으로 지향하는 경험을 구분하면서, 원본 보존·작업 격리·명시적 통합이라는 경계를 유지하려고 합니다.
 
 이 글은 전체 구조를 이해하기 위한 출발점입니다. 더 구체적인 행동 계약을 확인할 때는 [Knowledge Model](architecture/knowledge-model.md), [Sharing](architecture/sharing.md), [Workspace](architecture/workspace.md), [Synchronization](architecture/synchronization.md), [Code Projection](architecture/code-projection.md)을, 사용자 경험의 의도는 [Experience](experience.md)를 참고할 수 있습니다.
 

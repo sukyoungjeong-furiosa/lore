@@ -17,6 +17,7 @@ A document is knowledge with a stable identity, a title, and content owned by a 
 Document metadata describes authorship, change history, and archive state where available.
 
 - Backend document metadata remains distinct from Lore-managed mapping metadata. Unavailable metadata remains unknown.
+- Authorship and acceptance into shared knowledge do not establish human review or the validity of an explanation.
 - Archiving a Lore-owned document preserves its identity, content, and references and is reversible.
 
 ## Organization
