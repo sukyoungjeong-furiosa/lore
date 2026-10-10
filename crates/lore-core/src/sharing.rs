@@ -7,8 +7,17 @@ use std::collections::{BTreeMap, BTreeSet};
 pub struct MappingStoreId(String);
 
 impl MappingStoreId {
+    pub fn new() -> Self {
+        Self(uuid::Uuid::new_v4().to_string())
+    }
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl Default for MappingStoreId {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

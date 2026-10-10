@@ -62,6 +62,7 @@ fn glob_boundaries_repository_identity_and_duplicate_mappings_remain_explicit() 
         },
     };
     let route = RoutingDocument {
+        store: None,
         mapping: None,
         document: reference,
         title: None,

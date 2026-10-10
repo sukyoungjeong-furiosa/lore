@@ -13,8 +13,24 @@ pub enum ResolverKind {
     Model,
 }
 
+#[derive(Clone, Copy, ValueEnum)]
+pub enum ConflictChoice {
+    Local,
+    Shared,
+}
+
 #[derive(Subcommand)]
 pub enum MapOperation {
+    /// Resolve a reported conflict explicitly; --remote selects the store.
+    ResolveConflict {
+        id: MappingId,
+        #[arg(long)]
+        if_match: RevisionId,
+        #[arg(long)]
+        if_shared: RevisionId,
+        #[arg(long, value_enum)]
+        take: ConflictChoice,
+    },
     /// Configure an HTTP mapping catalog for this repository across worktrees.
     #[command(alias = "source")]
     Catalog {
@@ -23,6 +39,8 @@ pub enum MapOperation {
     },
     /// Fetch mapping catalog metadata without reading documents or activating mapping revisions.
     Fetch {
+        #[arg(long)]
+        id: Option<MappingId>,
         #[arg(long)]
         max_age_seconds: Option<u64>,
     },
@@ -161,6 +179,9 @@ pub fn print(value: &Value, command: &MapOperation) {
         }
         MapOperation::Ls { .. } => {
             for item in value["mappings"].as_array().unwrap() {
+                if let Some(store) = item["store"].as_str() {
+                    println!("Store: {store}");
+                }
                 print_view(&item["view"]);
             }
         }
@@ -241,6 +262,7 @@ pub fn execute(
     command: &MapOperation,
 ) -> Result<Value> {
     match command {
+        MapOperation::ResolveConflict { .. } => unreachable!(),
         MapOperation::Catalog { command } => {
             let store = CatalogStore::new(home, &workspace.code.repository_id);
             match command {
@@ -258,9 +280,17 @@ pub fn execute(
                 }
             }
         }
-        MapOperation::Fetch { max_age_seconds } => Ok(serde_json::to_value(
-            CatalogStore::new(home, &workspace.code.repository_id).fetch(*max_age_seconds)?,
-        )?),
+        MapOperation::Fetch {
+            max_age_seconds,
+            id,
+        } => {
+            if id.is_some() {
+                return Err(Error::invalid("Fetching a full mapping requires --remote"));
+            }
+            Ok(serde_json::to_value(
+                CatalogStore::new(home, &workspace.code.repository_id).fetch(*max_age_seconds)?,
+            )?)
+        }
         MapOperation::Publish {
             id,
             if_match,
@@ -310,10 +340,11 @@ pub fn execute(
                 )?
             } else {
                 workspace
-                    .list_mappings(*include_archived)?
+                    .list_scoped_mappings(*include_archived)?
                     .into_iter()
-                    .map(|view| LocatedMapping {
-                        view: view.into(),
+                    .map(|item| LocatedMapping {
+                        store: item.store,
+                        view: item.view.into(),
                         projections: vec![],
                     })
                     .collect()
@@ -430,7 +461,7 @@ pub fn execute(
                 .map(|anchor| resolver.resolve(anchor, &workspace.code, requested.as_deref()))
                 .collect::<Result<Vec<_>>>()?;
             Ok(
-                json!({"view":lore_core::MappingSummaryView::from(view),"projections":projections,"resolver":details}),
+                json!({"store": workspace.mapping_store_for(id)?, "view":lore_core::MappingSummaryView::from(view),"projections":projections,"resolver":details}),
             )
         }
         MapOperation::Install { from, path } => {

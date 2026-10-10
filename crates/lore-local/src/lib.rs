@@ -3,10 +3,12 @@ mod catalog;
 mod credentials;
 mod git;
 mod mappings;
+mod remote_client;
 mod remotes;
 mod resolver_settings;
 mod routing;
 mod store;
+mod synchronization;
 mod workspace;
 
 pub use backends::*;
@@ -14,10 +16,12 @@ pub use catalog::*;
 pub use credentials::CredentialStore;
 pub use git::GitRepository;
 pub use mappings::*;
+pub use remote_client::*;
 pub use remotes::*;
 pub use resolver_settings::*;
 pub use routing::*;
 pub use store::FileRepository;
+pub use synchronization::*;
 pub use workspace::*;
 
 use lore_core::{Error, ErrorKind, Result};
@@ -88,5 +92,7 @@ pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     file.write_all(bytes)?;
     file.as_file().sync_all()?;
     file.persist(path).map_err(|e| Error::from(e.error))?;
+    #[cfg(unix)]
+    std::fs::File::open(parent)?.sync_all()?;
     Ok(())
 }

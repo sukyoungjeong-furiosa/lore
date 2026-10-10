@@ -10,6 +10,7 @@ lore-core = { path = "../lore-core" }
 lore-local = { path = "../lore-local" }
 lore-notion = { path = "../lore-notion" }
 lore-resolver = { path = "../lore-resolver" }
+lore-server = { path = "../lore-server" }
 clap.workspace = true
 serde_json.workspace = true
 

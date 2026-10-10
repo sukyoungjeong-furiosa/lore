@@ -1,4 +1,7 @@
-use crate::{BackendRegistry, CatalogStore, Workspace, atomic_write};
+use crate::{
+    BackendRegistry, CatalogStore, HttpMappingRemote, RemoteCatalogCache, RemoteRegistry,
+    Workspace, atomic_write,
+};
 use lore_core::{
     AnchorSummary, ErrorKind, LoreDocument, RelatedLore, Result, RoutingDocument, discover_lore,
     hash,
@@ -20,6 +23,7 @@ impl Workspace {
             &state.repository_id,
             &state.documents,
             &state.mappings,
+            &state.store_mappings,
         ))?);
         let path = self.state_path.with_file_name("routing-index.json");
         match std::fs::read(&path) {
@@ -33,11 +37,12 @@ impl Workspace {
             Err(error) => return Err(error.into()),
         }
         let mut documents = vec![];
-        for (id, active) in state.mappings {
-            let mapping = self.mapping_repository.load(&id, &active.revision)?.mapping;
+        for item in self.list_scoped_mappings(true)? {
+            let mapping = item.view.record.mapping;
             if !mapping.archived {
                 documents.push(RoutingDocument {
-                    mapping: Some(id),
+                    store: item.store,
+                    mapping: Some(mapping.id.clone()),
                     document: LoreDocument::Backend {
                         reference: mapping.document,
                     },
@@ -61,6 +66,7 @@ impl Workspace {
             let document = self.repository.load(&id, &active.revision)?.document;
             if !document.archived {
                 documents.push(RoutingDocument {
+                    store: None,
                     mapping: None,
                     document: LoreDocument::Local { id },
                     title: Some(document.title),
@@ -128,6 +134,7 @@ impl Workspace {
                         && !excluded.contains(&document)
                     {
                         documents.push(RoutingDocument {
+                            store: None,
                             mapping: Some(id),
                             document,
                             title: entry.title,
@@ -141,6 +148,58 @@ impl Workspace {
                 warnings.push(error.message)
             }
             Err(error) => return Err(error),
+        }
+        for (store, name) in &state.connected_remotes {
+            let observation = (|| {
+                let connection = RemoteRegistry::new(home).get(name)?;
+                if connection.store != *store {
+                    return Err(lore_core::Error::new(
+                        ErrorKind::Conflict,
+                        "Configured remote now selects a different store; reconnect explicitly",
+                    ));
+                }
+                let cache = RemoteCatalogCache::new(home);
+                if !refresh {
+                    match cache.read(store, &self.code.repository_id) {
+                        Ok(observation) => return Ok(observation),
+                        Err(error) if error.kind == ErrorKind::NotCached && !cached => {}
+                        Err(error) => return Err(error),
+                    }
+                }
+                cache.fetch(
+                    &HttpMappingRemote::new(home, name, connection)?,
+                    &self.code.repository_id,
+                )
+            })();
+            match observation {
+                Ok(observation) => {
+                    let mut shared = vec![];
+                    for (id, entry) in observation.catalog.catalog.mappings {
+                        let mapping = entry.view.record.mapping;
+                        let document = LoreDocument::Backend {
+                            reference: mapping.document,
+                        };
+                        if !mapping.archived
+                            && !state
+                                .store_mappings
+                                .get(store)
+                                .is_some_and(|mappings| mappings.contains_key(&id))
+                            && !excluded.contains(&document)
+                        {
+                            shared.push(RoutingDocument {
+                                store: Some(store.clone()),
+                                mapping: Some(id),
+                                document,
+                                title: entry.title,
+                                scopes: mapping.scopes,
+                                anchors: mapping.anchors,
+                            });
+                        }
+                    }
+                    documents.extend(shared);
+                }
+                Err(error) => warnings.push(format!("Lore remote {name}: {}", error.message)),
+            }
         }
         let mut related = discover_lore(&documents, &self.code.repository_id, paths)?;
         for item in &mut related {

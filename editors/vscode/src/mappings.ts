@@ -9,6 +9,7 @@ export interface MappingEntry {
   selection?: SelectedDocument;
   anchor?: string;
   mapping?: string;
+  store?: string | null;
   location?: Location;
 }
 interface ConnectionsState { view?: View; mappings?: LocatedMapping[] }
@@ -72,9 +73,9 @@ export class Mappings implements vscode.TreeDataProvider<MappingEntry>, vscode.D
       const state = await this.state!;
       let result: MappingEntry[];
       if (selected.source.kind === 'backend') {
-        const located = await Promise.all(state.mappings!.map(({ view }) => call<LocatedMapping>(selected.root, ['map', 'resolve', view.record.mapping.id])));
-        result = located.flatMap(({ view, projections }) => [
-          ...this.entries(selected, view.record.mapping.anchors, projections, view.record.mapping.context, view.record.mapping.id),
+        const located = await Promise.all(state.mappings!.map(({ view, store }) => call<LocatedMapping>(selected.root, ['map', 'resolve', view.record.mapping.id, ...(store ? ['--store', store] : [])])));
+        result = located.flatMap(({ view, projections, store }) => [
+          ...this.entries(selected, view.record.mapping.anchors, projections, view.record.mapping.context, view.record.mapping.id).map(entry => ({ ...entry, store, detail: [entry.detail, store ? `Store: ${store}` : ''].filter(Boolean).join('\n') })),
           ...(view.record.mapping.scopes || []).map(scope => ({ label: scope.glob, description: 'Code scope', detail: [scope.repository, view.record.mapping.context].filter(Boolean).join('\n') }))
         ]);
       } else {
@@ -104,7 +105,7 @@ export class Mappings implements vscode.TreeDataProvider<MappingEntry>, vscode.D
     if (this.selected !== selected) throw new Error('The selected document changed. Choose its current code connection.');
     if (!entry.mapping && selected.source.kind !== 'local') return;
     const result = entry.mapping
-      ? await call<LocatedMapping>(selected.root, ['map', 'resolve', entry.mapping])
+      ? await call<LocatedMapping>(selected.root, ['map', 'resolve', entry.mapping, ...(entry.store ? ['--store', entry.store] : [])])
       : await call<{ projections: Projection[] }>(selected.root, ['resolve', selected.source.kind === 'local' ? selected.source.id : '']);
     const location = result.projections.find(p => p.anchor === entry.anchor)?.locations.find(l => l.path === entry.location!.path && l.start === entry.location!.start && l.end === entry.location!.end);
     if (this.selected !== selected) return;

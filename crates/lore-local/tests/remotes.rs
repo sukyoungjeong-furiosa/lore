@@ -5,6 +5,7 @@ fn remote(store: &str, url: &str) -> LoreRemote {
     LoreRemote {
         store: store.parse().unwrap(),
         server_url: url.into(),
+        token_env: None,
     }
 }
 

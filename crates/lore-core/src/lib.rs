@@ -6,6 +6,7 @@ mod projection;
 mod repository;
 mod routing;
 mod sharing;
+mod synchronization;
 mod wiki;
 
 pub use backend::*;
@@ -16,9 +17,10 @@ pub use projection::*;
 pub use repository::*;
 pub use routing::*;
 pub use sharing::*;
+pub use synchronization::*;
 pub use wiki::*;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ErrorKind {
     InvalidInput,
@@ -32,7 +34,7 @@ pub enum ErrorKind {
     NotCached,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Error {
     pub kind: ErrorKind,
     pub message: String,

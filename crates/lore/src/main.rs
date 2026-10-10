@@ -10,6 +10,8 @@ mod context_commands;
 mod mapping_commands;
 mod remote_commands;
 mod resolver_commands;
+mod server_commands;
+mod sync_commands;
 
 #[derive(Parser)]
 #[command(version, about = "What the code doesn't tell you.")]
@@ -43,6 +45,27 @@ impl From<Author> for Actor {
 
 #[derive(Subcommand)]
 enum Operation {
+    /// Publish one mapping revision to a selected Lore remote.
+    Push {
+        remote: String,
+        id: lore_core::MappingId,
+        #[arg(long)]
+        from_remote: Option<String>,
+    },
+    /// Incorporate shared mappings for this repository without overwriting local changes.
+    Pull {
+        remote: String,
+        #[arg(long, conflicts_with = "path")]
+        id: Option<lore_core::MappingId>,
+        #[arg(long)]
+        path: Option<PathBuf>,
+        #[arg(long)]
+        backend: Option<String>,
+    },
+    Server {
+        #[command(subcommand)]
+        command: server_commands::ServerOperation,
+    },
     /// Configure mapping-sharing connections independently of document backends.
     Remote {
         #[command(subcommand)]
@@ -70,6 +93,10 @@ enum Operation {
     },
     /// Maintain independent code-to-document mappings.
     Map {
+        #[arg(long, global = true)]
+        remote: Option<String>,
+        #[arg(long, global = true, conflicts_with = "remote")]
+        store: Option<lore_core::MappingStoreId>,
         #[command(subcommand)]
         command: mapping_commands::MapOperation,
     },
@@ -194,7 +221,10 @@ fn scope(workspace: &Workspace, path: &std::path::Path) -> Result<String> {
 fn execute(cli: &Cli) -> Result<Value> {
     let data_home = home()?;
     match &cli.command {
-        Operation::Remote { command } => return remote_commands::execute(&data_home, command),
+        Operation::Server { command } => return server_commands::execute(command),
+        Operation::Remote { command } => {
+            return remote_commands::execute(&data_home, &cli.repo, command);
+        }
         Operation::Resolver { command } => {
             return resolver_commands::configure(&data_home, command);
         }
@@ -216,8 +246,39 @@ fn execute(cli: &Cli) -> Result<Value> {
         return Ok(json!({"state_path":workspace.state_path,"workspace":workspace.state()?}));
     }
     let workspace = Workspace::open(&data_home, &cli.repo)?;
+    let workspace = if let Operation::Map {
+        store: Some(store), ..
+    } = &cli.command
+    {
+        workspace.with_mapping_store(store.clone())
+    } else if let Operation::Map {
+        remote: Some(name), ..
+    } = &cli.command
+    {
+        sync_commands::scoped_workspace(workspace, &data_home, name)?
+    } else {
+        workspace
+    };
     let actor: Actor = cli.author.into();
     match &cli.command {
+        Operation::Push {
+            remote,
+            id,
+            from_remote,
+        } => sync_commands::push(&workspace, &data_home, remote, id, from_remote.as_deref()),
+        Operation::Pull {
+            remote,
+            id,
+            path,
+            backend,
+        } => sync_commands::pull(
+            &workspace,
+            &data_home,
+            remote,
+            id.as_ref(),
+            path.as_ref(),
+            backend.as_deref(),
+        ),
         Operation::Context { command } => {
             context_commands::execute(&workspace, &data_home, command)
         }
@@ -227,7 +288,78 @@ fn execute(cli: &Cli) -> Result<Value> {
         | Operation::Remote { .. } => {
             unreachable!()
         }
-        Operation::Map { command } => {
+        Operation::Server { .. } => unreachable!(),
+        Operation::Map {
+            command,
+            remote,
+            store,
+        } => {
+            if let mapping_commands::MapOperation::ResolveConflict {
+                id,
+                if_match,
+                if_shared,
+                take,
+            } = command
+            {
+                let name = remote
+                    .as_deref()
+                    .ok_or_else(|| Error::invalid("Conflict resolution requires --remote"))?;
+                let client = sync_commands::client(&data_home, name)?;
+                return Ok(serde_json::to_value(workspace.resolve_mapping_conflict(
+                    &client,
+                    &lore_core::SharedMappingKey {
+                        store: client.connection.store.clone(),
+                        mapping: id.clone(),
+                    },
+                    if_match,
+                    if_shared,
+                    match take {
+                        mapping_commands::ConflictChoice::Local => {
+                            lore_local::ConflictResolutionChoice::Local
+                        }
+                        mapping_commands::ConflictChoice::Shared => {
+                            lore_local::ConflictResolutionChoice::Shared
+                        }
+                    },
+                    actor,
+                )?)?);
+            }
+            if remote.is_some()
+                && matches!(
+                    command,
+                    mapping_commands::MapOperation::Catalog { .. }
+                        | mapping_commands::MapOperation::Publish { .. }
+                )
+            {
+                return Err(Error::invalid(
+                    "Use push for Lore remotes; legacy catalogs are configured separately",
+                ));
+            }
+            if let mapping_commands::MapOperation::Fetch {
+                id,
+                max_age_seconds,
+            } = command
+                && let Some(name) = remote
+            {
+                if max_age_seconds.is_some() {
+                    return Err(Error::invalid(
+                        "--max-age-seconds is supported only by the legacy catalog; remote fetch refreshes explicitly",
+                    ));
+                }
+                return sync_commands::fetch(&workspace, &data_home, name, id.as_ref());
+            }
+            if store.is_some()
+                && matches!(
+                    command,
+                    mapping_commands::MapOperation::Fetch { .. }
+                        | mapping_commands::MapOperation::Catalog { .. }
+                        | mapping_commands::MapOperation::Publish { .. }
+                )
+            {
+                return Err(Error::invalid(
+                    "--store selects local mapping state; use --remote for fetch or push for publication",
+                ));
+            }
             mapping_commands::execute(&workspace, &data_home, actor, command)
         }
         Operation::Init { .. } => unreachable!(),
@@ -459,7 +591,7 @@ fn print_human(value: &Value, command: &Operation) {
     match command {
         Operation::Context { .. } => context_commands::print(value),
         Operation::Docs { command } => backend_commands::print(value, command),
-        Operation::Map { command } => mapping_commands::print(value, command),
+        Operation::Map { command, .. } => mapping_commands::print(value, command),
         Operation::Show { raw, .. } => {
             let d = &value["document"];
             if !raw {
@@ -547,6 +679,15 @@ fn main() {
                 .is_some_and(|r| r.iter().any(|v| v["status"] == "failed"))
             {
                 std::process::exit(1);
+            }
+            if value["integration"] == "conflict"
+                || value["results"].as_array().is_some_and(|results| {
+                    results.iter().any(|result| {
+                        result["status"] == "conflict" || result["status"] == "local_changed"
+                    })
+                })
+            {
+                std::process::exit(3);
             }
         }
         Err(error) => {

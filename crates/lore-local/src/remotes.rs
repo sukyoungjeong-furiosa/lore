@@ -12,10 +12,19 @@ use std::{
 pub struct LoreRemote {
     pub server_url: String,
     pub store: MappingStoreId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_env: Option<String>,
 }
 
 impl LoreRemote {
     pub fn validate(&self) -> Result<()> {
+        if self.token_env.as_ref().is_some_and(|name| {
+            name.is_empty() || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        }) {
+            return Err(Error::invalid(
+                "Invalid Lore remote token environment variable",
+            ));
+        }
         let url = reqwest::Url::parse(&self.server_url)
             .map_err(|_| Error::invalid("Invalid Lore server URL"))?;
         if !matches!(url.scheme(), "http" | "https")

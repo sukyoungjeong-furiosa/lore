@@ -33,7 +33,7 @@ Published mapping revisions are immutable; updates create new revisions. Externa
 
 - Pull can select mappings by document reference or [workspace code scope](workspace.md#knowledge-availability). Push targets one mapping. Results are reported per mapping.
 - Applying results must not discard changes made during the operation. Retrying uncertain operations must not duplicate publications or lose local changes.
-- Conflicting versions and their shared baseline remain available for inspection. Humans or agents may propose resolutions; application is explicit and requires the relevant states to remain unchanged since preparation.
+- Conflicting versions and their shared baseline remain available for inspection. Applying an explicit resolution checks the local revision and the shared revision observed during resolution. Publication checks the shared head again before accepting it.
 
 ## Lore-Owned Documents
 

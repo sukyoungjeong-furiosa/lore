@@ -32,6 +32,7 @@ Documents may have no mappings; stores may have no registrations and workspaces 
 - Workspace discovery uses its current code repository and any selected backend scope within each connected store. It includes accessible mappings in that scope; backend page discovery remains separate. Document-level selection is not required initially.
 - Mapping identity, baselines, and publication targets retain their store identity. Document identity is its backend identity and backend-native document ID. Matching titles or references do not merge independent mappings.
 - Connection settings select knowledge; they do not grant access. The server enforces permitted store, repository, and backend scope. Mapping access does not confer document access.
+- Permissions retain their repository–backend pairing; separate grants do not authorize every combination of their resources.
 - Backend connections bind shared backend identities to personal credentials and local display names. Connecting a remote does not create credentials or replace an existing personal connection. Cached content and authentication remain local to the user's environment.
 
 ## Working Experience

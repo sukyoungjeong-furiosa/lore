@@ -7,13 +7,13 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SharedBaseline {
     pub source: String,
     pub revision: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ActiveDocument {
     pub revision: RevisionId,
     pub shared_baseline: Option<SharedBaseline>,
@@ -28,6 +28,11 @@ pub struct WorkspaceState {
     pub documents: BTreeMap<DocumentId, ActiveDocument>,
     #[serde(default)]
     pub mappings: BTreeMap<lore_core::MappingId, ActiveDocument>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub store_mappings:
+        BTreeMap<lore_core::MappingStoreId, BTreeMap<lore_core::MappingId, ActiveDocument>>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub connected_remotes: BTreeMap<lore_core::MappingStoreId, String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -41,6 +46,7 @@ pub struct Workspace {
     pub code: GitRepository,
     pub repository: Box<dyn KnowledgeRepository>,
     pub mapping_repository: Box<dyn lore_core::MappingRepository>,
+    pub mapping_store: Option<lore_core::MappingStoreId>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -168,6 +174,8 @@ impl Workspace {
                 store: directory,
                 documents: BTreeMap::new(),
                 mappings: BTreeMap::new(),
+                store_mappings: BTreeMap::new(),
+                connected_remotes: BTreeMap::new(),
             };
             atomic_write(&state_path, &serde_json::to_vec_pretty(&state)?)?;
         }
@@ -218,6 +226,7 @@ impl Workspace {
         Ok(Self {
             state_path,
             code,
+            mapping_store: None,
             mapping_repository: Box::new(crate::FileMappingRepository {
                 directory: state.store.clone(),
             }),
