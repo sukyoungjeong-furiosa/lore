@@ -850,7 +850,7 @@ fn remote_mapping_discovery_fetches_metadata_without_installing_or_reading_bodie
     mock.set("/mapping-index", 200, catalog.clone());
     s.ok(&[
         "map",
-        "source",
+        "catalog",
         "set",
         &format!("{}/mapping-index", mock.url),
         "--token-env",

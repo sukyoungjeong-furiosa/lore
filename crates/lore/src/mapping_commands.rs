@@ -1,19 +1,27 @@
-use clap::Subcommand;
+use clap::{Subcommand, ValueEnum};
 use lore_core::{
     Actor, AnchorResolver, Error, MappingId, PathScope, Result, RevisionId, TextResolver,
 };
-use lore_local::{CatalogStore, LocatedMapping, MappingSource, Workspace};
+use lore_local::{CatalogConnection, CatalogStore, LocatedMapping, Workspace};
+use lore_resolver::{ChatProposer, ModelResolver};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
+#[derive(Clone, Copy, ValueEnum)]
+pub enum ResolverKind {
+    Text,
+    Model,
+}
+
 #[derive(Subcommand)]
 pub enum MapOperation {
-    /// Configure a repository's shared discovery source across worktrees.
-    Source {
+    /// Configure an HTTP mapping catalog for this repository across worktrees.
+    #[command(alias = "source")]
+    Catalog {
         #[command(subcommand)]
-        command: MappingSourceOperation,
+        command: CatalogOperation,
     },
-    /// Fetch discovery metadata without activating mappings or changing local baselines.
+    /// Fetch mapping catalog metadata without reading documents or activating mapping revisions.
     Fetch {
         #[arg(long)]
         max_age_seconds: Option<u64>,
@@ -83,6 +91,18 @@ pub enum MapOperation {
     },
     Resolve {
         id: MappingId,
+        /// Model mode uses exact-text resolution first, then proposes correspondence through the configured API.
+        #[arg(long, value_enum, default_value = "text")]
+        resolver: ResolverKind,
+        /// Candidate file or directory; paths are literal, not glob patterns.
+        #[arg(long)]
+        path: Option<PathBuf>,
+        /// JSON model configuration; omitted fields use Furiosa Access defaults.
+        #[arg(long)]
+        resolver_config: Option<PathBuf>,
+        /// Named model profile; omitted uses the selected default profile.
+        #[arg(long, conflicts_with = "resolver_config")]
+        profile: Option<String>,
     },
     Install {
         #[arg(long)]
@@ -93,7 +113,7 @@ pub enum MapOperation {
 }
 
 #[derive(Subcommand)]
-pub enum MappingSourceOperation {
+pub enum CatalogOperation {
     Set {
         url: String,
         #[arg(long)]
@@ -130,7 +150,13 @@ fn scopes(workspace: &Workspace, patterns: &[String]) -> Vec<PathScope> {
 
 pub fn print(value: &Value, command: &MapOperation) {
     match command {
-        MapOperation::Source { .. } | MapOperation::Fetch { .. } => {
+        MapOperation::Catalog { .. } => {
+            println!(
+                "Mapping catalog connection: {}",
+                serde_json::to_string_pretty(&value["source"]).unwrap()
+            );
+        }
+        MapOperation::Fetch { .. } => {
             println!("{}", serde_json::to_string_pretty(value).unwrap());
         }
         MapOperation::Ls { .. } => {
@@ -154,6 +180,22 @@ pub fn print(value: &Value, command: &MapOperation) {
                         location["start"],
                         location["end"]
                     );
+                }
+                for (index, candidate) in projection["alternatives"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .enumerate()
+                {
+                    println!("  Candidate {} (unconfirmed):", index + 1);
+                    for location in candidate.as_array().unwrap() {
+                        println!(
+                            "    {}:{}-{}",
+                            location["path"].as_str().unwrap(),
+                            location["start"],
+                            location["end"]
+                        );
+                    }
                 }
             }
         }
@@ -199,18 +241,18 @@ pub fn execute(
     command: &MapOperation,
 ) -> Result<Value> {
     match command {
-        MapOperation::Source { command } => {
+        MapOperation::Catalog { command } => {
             let store = CatalogStore::new(home, &workspace.code.repository_id);
             match command {
-                MappingSourceOperation::Set { url, token_env } => {
-                    store.configure(Some(&MappingSource {
+                CatalogOperation::Set { url, token_env } => {
+                    store.configure(Some(&CatalogConnection {
                         url: url.clone(),
                         token_env: token_env.clone(),
                     }))?;
-                    Ok(json!({"source":store.source()?}))
+                    Ok(json!({"source":store.connection()?}))
                 }
-                MappingSourceOperation::Show => Ok(json!({"source":store.source()?})),
-                MappingSourceOperation::Remove => {
+                CatalogOperation::Show => Ok(json!({"source":store.connection()?})),
+                CatalogOperation::Remove => {
                     store.configure(None)?;
                     Ok(json!({"source":null}))
                 }
@@ -336,16 +378,60 @@ pub fn execute(
             )?)?)
         }
         MapOperation::History { id } => Ok(serde_json::to_value(workspace.mapping_history(id)?)?),
-        MapOperation::Resolve { id } => {
+        MapOperation::Resolve {
+            id,
+            resolver,
+            path,
+            resolver_config,
+            profile,
+        } => {
             let view = workspace.read_mapping(id, None)?;
+            let requested = path
+                .as_ref()
+                .map(|path| super::scope(workspace, path))
+                .transpose()?;
+            let (resolver, details): (Box<dyn AnchorResolver>, Value) = match resolver {
+                ResolverKind::Text => {
+                    if resolver_config.is_some() || profile.is_some() {
+                        return Err(Error::invalid(
+                            "--resolver-config and --profile require --resolver model",
+                        ));
+                    }
+                    (Box::new(TextResolver), json!({"kind":"text"}))
+                }
+                ResolverKind::Model => {
+                    let selected = super::resolver_commands::model_config(
+                        home,
+                        profile.as_deref(),
+                        resolver_config.as_deref(),
+                    )?;
+                    let details = json!({
+                        "kind":"model",
+                        "model":selected.config.model,
+                        "profile":selected.profile,
+                        "model_connection":selected.connection,
+                        "config_digest":lore_core::hash(serde_json::to_vec(&selected.config)?),
+                    });
+                    let max_input_bytes = selected.config.max_input_bytes;
+                    (
+                        Box::new(ModelResolver {
+                            proposer: ChatProposer::with_token(selected.config, selected.token)?,
+                            max_input_bytes,
+                        }),
+                        details,
+                    )
+                }
+            };
             let projections = view
                 .record
                 .mapping
                 .anchors
                 .iter()
-                .map(|anchor| TextResolver.resolve(anchor, &workspace.code, None))
+                .map(|anchor| resolver.resolve(anchor, &workspace.code, requested.as_deref()))
                 .collect::<Result<Vec<_>>>()?;
-            Ok(json!({"view":lore_core::MappingSummaryView::from(view),"projections":projections}))
+            Ok(
+                json!({"view":lore_core::MappingSummaryView::from(view),"projections":projections,"resolver":details}),
+            )
         }
         MapOperation::Install { from, path } => {
             let source = Workspace::open(home, from)?;

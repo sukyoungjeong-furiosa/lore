@@ -643,6 +643,7 @@ dependencies = [
  "lore-core",
  "lore-local",
  "lore-notion",
+ "lore-resolver",
  "serde_json",
  "tempfile",
 ]
@@ -679,6 +680,16 @@ dependencies = [
  "serde_json",
  "tempfile",
  "uuid",
+]
+
+[[package]]
+name = "lore-resolver"
+version = "0.1.0"
+dependencies = [
+ "lore-core",
+ "reqwest",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

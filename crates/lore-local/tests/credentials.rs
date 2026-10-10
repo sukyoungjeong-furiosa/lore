@@ -82,3 +82,54 @@ fn credentials_are_connection_bound_private_and_removable() {
     store.remove("team").unwrap();
     assert!(store.get("team", &original).unwrap().is_none());
 }
+
+#[test]
+fn api_credentials_are_isolated_by_namespace_name_and_endpoint() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = CredentialStore::new(temp.path());
+    let endpoint = "https://example.invalid/v1";
+    store
+        .set("team", &config(endpoint), "notion-token")
+        .unwrap();
+    store
+        .set_connection("resolver", "team", endpoint, "model-token")
+        .unwrap();
+    assert_eq!(
+        store.get("team", &config(endpoint)).unwrap().as_deref(),
+        Some("notion-token")
+    );
+    assert_eq!(
+        store
+            .get_connection("resolver", "team", endpoint)
+            .unwrap()
+            .as_deref(),
+        Some("model-token")
+    );
+    assert!(
+        store
+            .get_connection("other", "team", endpoint)
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        store
+            .get_connection("resolver", "other", endpoint)
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        store
+            .get_connection("resolver", "team", "https://other.invalid/v1")
+            .unwrap_err()
+            .kind,
+        ErrorKind::PermissionDenied
+    );
+    store.remove_connection("resolver", "team").unwrap();
+    assert!(
+        store
+            .get_connection("resolver", "team", endpoint)
+            .unwrap()
+            .is_none()
+    );
+    assert!(store.get("team", &config(endpoint)).unwrap().is_some());
+}

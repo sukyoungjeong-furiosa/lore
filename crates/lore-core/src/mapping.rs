@@ -90,11 +90,28 @@ pub struct Mapping {
 }
 
 impl Mapping {
+    /// Returns the code repository shared by every anchor and path scope.
+    /// Missing or mixed repository references are rejected.
+    pub fn code_repository(&self) -> Result<&str> {
+        let mut repositories = self
+            .anchors
+            .iter()
+            .map(|anchor| anchor.context.repository.as_str())
+            .chain(self.scopes.iter().map(|scope| scope.repository.as_str()));
+        let repository = repositories
+            .next()
+            .ok_or_else(|| Error::invalid("Mappings require an anchor or a code scope"))?;
+        if repository.trim().is_empty() || repositories.any(|other| other != repository) {
+            return Err(Error::invalid(
+                "A mapping must reference exactly one code repository",
+            ));
+        }
+        Ok(repository)
+    }
+
     pub fn validate(&self) -> Result<()> {
         self.document.validate()?;
-        if self.anchors.is_empty() && self.scopes.is_empty() {
-            return Err(Error::invalid("Mappings require an anchor or a code scope"));
-        }
+        self.code_repository()?;
         for scope in &self.scopes {
             scope.matcher()?;
         }

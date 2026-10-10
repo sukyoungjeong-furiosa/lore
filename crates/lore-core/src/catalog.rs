@@ -44,12 +44,17 @@ impl MappingCatalog {
             mapping.document.validate()?;
             for scope in &mapping.scopes {
                 scope.matcher()?;
+                if scope.repository != self.repository {
+                    return Err(Error::invalid(
+                        "Catalog mappings must reference the catalog's code repository",
+                    ));
+                }
             }
             for anchor in &mapping.anchors {
                 validate_relative_path(&anchor.path)?;
                 if anchor.start == 0
                     || anchor.end < anchor.start
-                    || anchor.context.repository.is_empty()
+                    || anchor.context.repository != self.repository
                 {
                     return Err(Error::invalid("Catalog anchor location is invalid"));
                 }

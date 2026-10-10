@@ -10,8 +10,9 @@ use std::{
     time::Duration,
 };
 
+/// Connects to read-only mapping discovery metadata, independently of document access or publication.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct MappingSource {
+pub struct CatalogConnection {
     pub url: String,
     pub token_env: Option<String>,
 }
@@ -48,7 +49,7 @@ impl CatalogStore {
         Ok(lock)
     }
 
-    pub fn source(&self) -> Result<Option<MappingSource>> {
+    pub fn connection(&self) -> Result<Option<CatalogConnection>> {
         match std::fs::read(self.directory.join("source.json")) {
             Ok(bytes) => Ok(Some(serde_json::from_slice(&bytes)?)),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -56,16 +57,16 @@ impl CatalogStore {
         }
     }
 
-    pub fn configure(&self, source: Option<&MappingSource>) -> Result<()> {
+    pub fn configure(&self, source: Option<&CatalogConnection>) -> Result<()> {
         if let Some(source) = source {
             let url = reqwest::Url::parse(&source.url)
-                .map_err(|_| Error::invalid("Invalid mapping source URL"))?;
+                .map_err(|_| Error::invalid("Invalid mapping catalog URL"))?;
             if !matches!(url.scheme(), "http" | "https")
                 || !url.username().is_empty()
                 || url.password().is_some()
             {
                 return Err(Error::invalid(
-                    "Mapping sources use HTTP(S) without embedded credentials",
+                    "Mapping catalogs use HTTP(S) without embedded credentials",
                 ));
             }
             if let Some(name) = &source.token_env
@@ -75,7 +76,7 @@ impl CatalogStore {
                         .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_'))
             {
                 return Err(Error::invalid(
-                    "Invalid mapping source token environment variable",
+                    "Invalid mapping catalog token environment variable",
                 ));
             }
         }
@@ -90,7 +91,7 @@ impl CatalogStore {
     }
 
     pub fn read(&self, cached: bool) -> Result<CatalogObservation> {
-        match self.source()? {
+        match self.connection()? {
             None => self.local(),
             Some(source) => match self.cached(&source.url) {
                 Ok(observation) => Ok(observation),
@@ -121,7 +122,7 @@ impl CatalogStore {
             if error.kind() == std::io::ErrorKind::NotFound {
                 Error::new(
                     ErrorKind::NotCached,
-                    "Mapping source index is not cached; run lore map fetch",
+                    "Mapping catalog is not cached; run lore map fetch",
                 )
             } else {
                 error.into()
@@ -131,7 +132,7 @@ impl CatalogStore {
         if observation.source != url {
             return Err(Error::new(
                 ErrorKind::NotCached,
-                "Mapping source changed; fetch its index",
+                "Mapping catalog connection changed; fetch its index",
             ));
         }
         observation.catalog.validate(&self.repository)?;
@@ -141,7 +142,7 @@ impl CatalogStore {
     /// Refreshes discovery metadata without activating revisions or changing workspace baselines.
     pub fn fetch(&self, max_age_seconds: Option<u64>) -> Result<CatalogObservation> {
         let _lock = self.lock()?;
-        let Some(source) = self.source()? else {
+        let Some(source) = self.connection()? else {
             return self.local();
         };
         if let Some(age) = max_age_seconds
@@ -153,7 +154,7 @@ impl CatalogStore {
         let unavailable = || {
             Error::new(
                 ErrorKind::Unavailable,
-                "Mapping source retrieval failed; previous cache is preserved",
+                "Mapping catalog retrieval failed; previous cache is preserved",
             )
         };
         let client = reqwest::blocking::Client::builder()
@@ -166,7 +167,7 @@ impl CatalogStore {
             let token = std::env::var(name).map_err(|_| {
                 Error::new(
                     ErrorKind::PermissionDenied,
-                    format!("Set {name} for this mapping source"),
+                    format!("Set {name} for this mapping catalog"),
                 )
             })?;
             request = request.bearer_auth(token);
@@ -178,7 +179,7 @@ impl CatalogStore {
         let mut bytes = vec![];
         response.take(8 * 1024 * 1024 + 1).read_to_end(&mut bytes)?;
         if bytes.len() > 8 * 1024 * 1024 {
-            return Err(Error::invalid("Mapping source index exceeds 8 MB"));
+            return Err(Error::invalid("Mapping catalog exceeds 8 MB"));
         }
         let catalog: MappingCatalog = serde_json::from_slice(&bytes)?;
         catalog.validate(&self.repository)?;
@@ -196,10 +197,10 @@ impl CatalogStore {
 
     fn publish(&self, entry: CatalogEntry, expected: Option<&RevisionId>) -> Result<()> {
         let _lock = self.lock()?;
-        if self.source()?.is_some() {
+        if self.connection()?.is_some() {
             return Err(Error::new(
                 ErrorKind::Unsupported,
-                "Remote mapping indexes are read-only; publication requires a writable source",
+                "HTTP mapping catalogs are read-only; publication is supported only by the local catalog",
             ));
         }
         let mut catalog = self.local()?.catalog;
