@@ -23,6 +23,7 @@ pub struct ResolverProfile {
     pub timeout_seconds: Option<u64>,
     pub max_input_bytes: Option<usize>,
     pub max_output_tokens: Option<usize>,
+    pub request_options: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -188,7 +189,7 @@ impl ResolverRegistry {
         })
     }
 
-    /// Unspecified prompt and limits retain their existing values.
+    /// Unspecified prompt, limits, and request options retain their existing values.
     pub fn set_profile(
         &self,
         name: &str,
@@ -204,6 +205,9 @@ impl ResolverRegistry {
                 profile.max_input_bytes = profile.max_input_bytes.or(existing.max_input_bytes);
                 profile.max_output_tokens =
                     profile.max_output_tokens.or(existing.max_output_tokens);
+                profile.request_options = profile
+                    .request_options
+                    .or_else(|| existing.request_options.clone());
             }
             s.profiles.insert(name.into(), profile);
             Ok(())

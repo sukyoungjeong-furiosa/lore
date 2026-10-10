@@ -305,8 +305,11 @@ fn profiles_reuse_saved_credentials_and_environment_overrides_them() {
         s.ok(&["resolver", "auth", "status", "access"])["source"],
         "stored"
     );
+    let options = s.temp.path().join("sampling.json");
+    let sampling = json!({"temperature":1.0,"top_p":0.95,"presence_penalty":0.0,"chat_template_kwargs":{"enable_thinking":false}});
+    std::fs::write(&options, sampling.to_string()).unwrap();
     for name in ["first", "second"] {
-        s.ok(&[
+        let mut args = vec![
             "resolver",
             "profile",
             "set",
@@ -315,7 +318,11 @@ fn profiles_reuse_saved_credentials_and_environment_overrides_them() {
             "access",
             "--model",
             name,
-        ]);
+        ];
+        if name == "first" {
+            args.extend(["--request-options-file", options.to_str().unwrap()]);
+        }
+        s.ok(&args);
         s.ok(&["resolver", "use", name]);
         let result = s.ok(&[
             "map",
@@ -369,6 +376,12 @@ fn profiles_reuse_saved_credentials_and_environment_overrides_them() {
     assert_eq!(explicit["resolver"]["profile"], "first");
     assert_eq!(s.ok(&["resolver", "list"])["default_profile"], "second");
     let requests = server.join().unwrap();
+    for request in [&requests[0], &requests[2]] {
+        for (key, value) in sampling.as_object().unwrap() {
+            assert_eq!(request[key], *value);
+        }
+    }
+    assert!(requests[1].get("chat_template_kwargs").is_none());
     assert_eq!(
         requests
             .iter()
@@ -411,6 +424,36 @@ fn profiles_reuse_saved_credentials_and_environment_overrides_them() {
             .unwrap()
             .is_empty()
     );
+}
+
+#[test]
+fn api_request_options_cannot_override_projection_protocol_fields() {
+    let s = Setup::new();
+    s.changed();
+    for field in ["model", "messages", "max_tokens", "stream"] {
+        let config = s.config("http://127.0.0.1:1/v1");
+        let mut value: Value = serde_json::from_slice(&std::fs::read(&config).unwrap()).unwrap();
+        value["request_options"] = json!({field: true});
+        std::fs::write(&config, value.to_string()).unwrap();
+        let output = s.run(&[
+            "map",
+            "resolve",
+            &s.id,
+            "--resolver",
+            "model",
+            "--resolver-config",
+            config.to_str().unwrap(),
+        ]);
+        assert!(!output.status.success());
+        let error: Value = serde_json::from_slice(&output.stderr).unwrap();
+        assert_eq!(error["error"]["kind"], "invalid_input");
+        assert!(
+            error["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("cannot override")
+        );
+    }
 }
 
 #[test]

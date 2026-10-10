@@ -9,6 +9,7 @@ fn profile(connection: &str, model: &str) -> ResolverProfile {
         timeout_seconds: None,
         max_input_bytes: None,
         max_output_tokens: None,
+        request_options: None,
     }
 }
 
@@ -29,6 +30,12 @@ fn profiles_share_connections_preserve_options_and_protect_references() {
     let mut first = profile("access", "first");
     first.system_prompt = Some("Custom projection prompt".into());
     first.max_output_tokens = Some(128);
+    first.request_options = Some(
+        serde_json::json!({"chat_template_kwargs":{"enable_thinking":false}})
+            .as_object()
+            .unwrap()
+            .clone(),
+    );
     registry.set_profile("first", first).unwrap();
     registry
         .set_profile("second", profile("access", "second"))
@@ -47,6 +54,29 @@ fn profiles_share_connections_preserve_options_and_protect_references() {
         Some("Custom projection prompt")
     );
     assert_eq!(settings.profile("first").unwrap().model, "changed");
+    assert_eq!(
+        settings
+            .profile("first")
+            .unwrap()
+            .request_options
+            .as_ref()
+            .unwrap()["chat_template_kwargs"]["enable_thinking"],
+        false
+    );
+    let mut cleared = profile("access", "changed");
+    cleared.request_options = Some(Default::default());
+    registry.set_profile("first", cleared).unwrap();
+    assert!(
+        registry
+            .read()
+            .unwrap()
+            .profile("first")
+            .unwrap()
+            .request_options
+            .as_ref()
+            .unwrap()
+            .is_empty()
+    );
     assert_eq!(
         registry.remove_connection("access").err().unwrap().kind,
         ErrorKind::Conflict

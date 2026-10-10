@@ -49,12 +49,17 @@ Run **Lore: Configure Resolver** in VS Code to set a model connection, model, an
 
 ```bash
 lore resolver connection set furiosa
-lore resolver profile set rngd --connection furiosa --model furiosa-ai/K-EXAONE-236B-A23B-NVFP4A16
+lore resolver profile set rngd --connection furiosa \
+  --model furiosa-ai/K-EXAONE-236B-A23B-NVFP4A16 \
+  --request-options-file examples/resolvers/k-exaone-request-options.json \
+  --max-output-tokens 16384 --timeout-seconds 360
 lore resolver use rngd
 lore --repo <checkout> --json map resolve <mapping-id> --resolver model --path <file-or-directory>
 ```
 
 Exact-text correspondence is checked first; otherwise the selected model proposes unconfirmed candidates. Use **Lore: Select Resolver**, `lore resolver use <profile>`, or `--profile <name>` to switch models. Environment variables override saved tokens. Without a selected profile, model mode uses Furiosa Access's K-EXAONE defaults and `FURIOSA_ACCESS_API_KEY`. `--resolver-config <file.json>` bypasses profiles for an explicit configuration. Regular discovery and editor navigation do not call the model.
+
+The example uses [LG's recommended sampling settings](https://huggingface.co/LGAI-EXAONE/K-EXAONE-236B-A23B#usage-guideline) and enables thinking. Request options are profile-specific API parameters; credentials remain separate. Reasoning consumes the output budget and can take several minutes. Setting `chat_template_kwargs.enable_thinking` to `false` is faster but can miss correspondence.
 
 ## Local Knowledge
 

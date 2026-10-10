@@ -55,7 +55,7 @@ pub enum ConnectionOperation {
 
 #[derive(Subcommand)]
 pub enum ProfileOperation {
-    /// Create or update a profile. Unspecified prompt and limits retain existing values.
+    /// Create or update a profile. Unspecified prompt, limits, and request options retain existing values.
     Set {
         name: String,
         #[arg(long)]
@@ -70,6 +70,9 @@ pub enum ProfileOperation {
         max_input_bytes: Option<usize>,
         #[arg(long)]
         max_output_tokens: Option<usize>,
+        /// JSON object of non-secret API parameters, such as sampling or chat-template options.
+        #[arg(long)]
+        request_options_file: Option<PathBuf>,
     },
     Remove {
         name: String,
@@ -128,6 +131,7 @@ pub fn configure(home: &Path, command: &ResolverOperation) -> Result<Value> {
                 timeout_seconds,
                 max_input_bytes,
                 max_output_tokens,
+                request_options_file,
             } => {
                 let profile = ResolverProfile {
                     connection: connection.clone(),
@@ -139,6 +143,10 @@ pub fn configure(home: &Path, command: &ResolverOperation) -> Result<Value> {
                     timeout_seconds: *timeout_seconds,
                     max_input_bytes: *max_input_bytes,
                     max_output_tokens: *max_output_tokens,
+                    request_options: match request_options_file {
+                        Some(path) => Some(serde_json::from_slice(&std::fs::read(path)?)?),
+                        None => None,
+                    },
                 };
                 registry.set_profile(name, profile)?
             }
@@ -232,6 +240,7 @@ pub fn model_config(
         max_output_tokens: profile
             .max_output_tokens
             .unwrap_or(defaults.max_output_tokens),
+        request_options: profile.request_options.clone().unwrap_or_default(),
     };
     let token = if std::env::var(&connection.token_env).is_ok_and(|s| !s.trim().is_empty()) {
         None

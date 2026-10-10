@@ -14,6 +14,8 @@ pub struct ChatConfig {
     pub timeout_seconds: u64,
     pub max_input_bytes: usize,
     pub max_output_tokens: usize,
+    /// Additional non-secret API fields; model, messages, output limit, and streaming remain owned by Lore.
+    pub request_options: serde_json::Map<String, serde_json::Value>,
 }
 
 impl Default for ChatConfig {
@@ -26,6 +28,7 @@ impl Default for ChatConfig {
             timeout_seconds: 120,
             max_input_bytes: 256 * 1024,
             max_output_tokens: 4096,
+            request_options: serde_json::Map::new(),
         }
     }
 }
@@ -44,6 +47,14 @@ impl ChatProposer {
 
     /// The configured environment variable overrides the supplied credential at request time.
     pub fn with_token(config: ChatConfig, token: Option<String>) -> Result<Self> {
+        if ["model", "messages", "max_tokens", "stream"]
+            .iter()
+            .any(|key| config.request_options.contains_key(*key))
+        {
+            return Err(Error::invalid(
+                "request_options cannot override model, messages, max_tokens, or stream",
+            ));
+        }
         let base = reqwest::Url::parse(&config.base_url)
             .map_err(|_| Error::invalid("Invalid model API URL"))?;
         if !matches!(base.scheme(), "https" | "http")
@@ -83,7 +94,7 @@ impl ChatProposer {
 
 impl ProjectionProposer for ChatProposer {
     fn propose(&self, input: &ProjectionInput) -> Result<ProjectionProposal> {
-        let request = serde_json::json!({
+        let mut request = serde_json::json!({
             "model": self.config.model,
             "messages": [
                 {"role": "system", "content": self.config.system_prompt},
@@ -91,6 +102,10 @@ impl ProjectionProposer for ChatProposer {
             ],
             "max_tokens": self.config.max_output_tokens,
         });
+        request
+            .as_object_mut()
+            .unwrap()
+            .extend(self.config.request_options.clone());
         let bytes = serde_json::to_vec(&request)?;
         if bytes.len() > self.config.max_input_bytes {
             return Err(Error::invalid(
@@ -143,6 +158,12 @@ impl ProjectionProposer for ChatProposer {
         let envelope: serde_json::Value = serde_json::from_slice(&bytes)
             .map_err(|_| Error::new(ErrorKind::Corrupt, "Model API response is not JSON"))?;
         let choice = &envelope["choices"][0];
+        if choice["finish_reason"] == "length" {
+            return Err(Error::new(
+                ErrorKind::Corrupt,
+                "Model exceeded max_output_tokens before completing a projection answer; increase the output limit or adjust reasoning options",
+            ));
+        }
         if choice["finish_reason"] != "stop" {
             return Err(Error::new(
                 ErrorKind::Corrupt,
