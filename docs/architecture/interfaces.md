@@ -1,17 +1,17 @@
 # Interfaces
 
-Lore provides CLI, editor, and agent-facing interfaces for code-aware discovery and mapping operations.
+Lore provides CLI, editor, and agent-facing interfaces for knowledge operations and code-aware discovery.
 
 ## Common Semantics
 
 - Interfaces may expose different subsets of Lore operations, but shared operations follow the same semantics.
-- Interfaces addressing the same workspace share its recorded mapping state and respect its isolation and synchronization contracts.
+- Interfaces addressing the same workspace share its recorded knowledge state and respect its isolation and synchronization contracts.
 - Document access and editing follow backend capabilities and permissions. Unsupported operations are explicit.
 - Unavailable knowledge, unresolved references, and failures are distinguishable from successful empty results. Discovery identifies its scope and does not imply complete backend coverage.
 
 ## CLI
 
-- Provides code-aware discovery, mapping inspection and editing, workspace management, and mapping synchronization.
+- Provides code-aware discovery, document and mapping operations, workspace management, and knowledge synchronization.
 - Supports non-interactive use and machine-readable results for automation.
 - Provides document access and management where supported by the owning backend.
 
