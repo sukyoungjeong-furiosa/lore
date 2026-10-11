@@ -29,6 +29,24 @@ impl KnowledgeSnapshot {
         }
         Ok(())
     }
+
+    /// Published mappings to Lore-owned documents require those documents in the same snapshot.
+    /// Working commits may be incomplete; external documents are owned by their backends.
+    pub fn validate_document_references(&self) -> Result<()> {
+        for record in self.mappings.values() {
+            let reference = &record.mapping.document;
+            if reference.backend == "local" {
+                let id: DocumentId = reference.id.parse()?;
+                if !self.documents.contains_key(&id) {
+                    return Err(Error::invalid(format!(
+                        "Mapping {} requires Lore-owned document {}; include it in the submission or pull its shared revision first",
+                        record.mapping.id, id
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 /// The version token is opaque outside its originating store.
@@ -47,9 +65,28 @@ pub struct KnowledgeProposal {
     pub integrated: Option<String>,
 }
 
+impl KnowledgeProposal {
+    /// Checks acceptance policy; storage still checks and atomically updates the central version.
+    /// Already accepted proposals retain their original outcome under either policy.
+    pub fn check_integration(&self, policy: IntegrationPolicy, central: &str) -> Result<()> {
+        if self.integrated.is_none()
+            && policy == IntegrationPolicy::FastForwardOnly
+            && self.base != central
+        {
+            return Err(Error::new(
+                ErrorKind::Conflict,
+                "Fast-forward only: pull the current central version and submit a new proposal",
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// Storage and transport do not determine when a proposal is accepted.
 pub trait KnowledgeStore: Send + Sync {
     fn read_version(&self, version: &str) -> Result<KnowledgeVersion>;
+    /// Retains a fixed proposal and its baseline, including references to Lore-owned documents.
+    /// Reusing an operation with different content is a conflict.
     fn submit(
         &self,
         operation: &str,
@@ -57,6 +94,8 @@ pub trait KnowledgeStore: Send + Sync {
         snapshot: &KnowledgeSnapshot,
     ) -> Result<KnowledgeProposal>;
     fn proposals(&self) -> Result<Vec<KnowledgeProposal>>;
+    /// Publishes a valid snapshot atomically against the expected central version.
+    /// Repeating an accepted proposal returns its original version without publishing it again.
     fn integrate(&self, proposal: &str, expected_central: &str) -> Result<KnowledgeVersion>;
 }
 

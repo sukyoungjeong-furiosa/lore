@@ -8,6 +8,7 @@ use std::{
 fn descriptor(id: &str) -> KnowledgeStoreDescriptor {
     KnowledgeStoreDescriptor {
         id: id.parse().unwrap(),
+        integration_policy: Default::default(),
         repositories: BTreeMap::from([
             ("compiler".into(), RepositoryRegistration::default()),
             ("kernels".into(), RepositoryRegistration::default()),

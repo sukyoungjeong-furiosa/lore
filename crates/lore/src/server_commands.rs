@@ -42,6 +42,7 @@ pub fn execute(command: &ServerOperation) -> Result<Value> {
             let store = store.clone().unwrap_or_default();
             let descriptor = KnowledgeStoreDescriptor {
                 id: store.clone(),
+                integration_policy: Default::default(),
                 repositories: repository
                     .iter()
                     .map(|id| (id.clone(), RepositoryRegistration::default()))

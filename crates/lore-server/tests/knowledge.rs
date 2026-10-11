@@ -85,7 +85,9 @@ impl KnowledgeStore for MemoryStore {
         Ok(KnowledgeVersion { snapshot, version })
     }
 }
-fn fixture() -> (
+fn fixture_with_policy(
+    policy: IntegrationPolicy,
+) -> (
     tempfile::TempDir,
     Server,
     Arc<Mutex<Memory>>,
@@ -152,6 +154,7 @@ fn fixture() -> (
     let config = ServerConfig {
         stores: vec![KnowledgeStoreDescriptor {
             id: "team".parse().unwrap(),
+            integration_policy: policy,
             repositories: BTreeMap::from([("compiler".into(), RepositoryRegistration::default())]),
             backends: BTreeSet::from(["local".into(), "notion".into(), "private".into()]),
         }],
@@ -183,6 +186,16 @@ fn fixture() -> (
     .unwrap()
     .with_knowledge_storage(Arc::new(MemoryFactory(state.clone())));
     (temp, server, state, notion, private)
+}
+
+fn fixture() -> (
+    tempfile::TempDir,
+    Server,
+    Arc<Mutex<Memory>>,
+    MappingId,
+    MappingId,
+) {
+    fixture_with_policy(IntegrationPolicy::ConflictFree)
 }
 fn read(server: &Server, token: &str) -> KnowledgeVersion {
     match server
@@ -343,4 +356,105 @@ fn integration_requires_permission_for_both_sides_of_a_backend_change() {
             .backend,
         "private"
     );
+}
+
+#[test]
+fn fast_forward_only_preserves_proposals_and_retries_return_the_original_acceptance() {
+    let (_temp, server, _, notion, private) =
+        fixture_with_policy(IntegrationPolicy::FastForwardOnly);
+    let base = read(&server, "owner");
+    let submit = |operation: &str, id: &MappingId| {
+        let mut snapshot = base.snapshot.clone();
+        snapshot.mappings.get_mut(id).unwrap().mapping.context = operation.into();
+        match server
+            .execute_knowledge(
+                "owner",
+                KnowledgeRequest::Submit {
+                    store: "team".parse().unwrap(),
+                    repository: "compiler".into(),
+                    operation_id: operation.into(),
+                    base: base.version.clone(),
+                    snapshot,
+                },
+            )
+            .unwrap()
+        {
+            KnowledgeResponse::Proposal { proposal } => proposal,
+            _ => panic!(),
+        }
+    };
+    let p1 = submit("first", &notion);
+    let p2 = submit("independent", &private);
+    let integrate = |id: &str, expected: &str| {
+        server.execute_knowledge(
+            "owner",
+            KnowledgeRequest::Integrate {
+                store: "team".parse().unwrap(),
+                repository: "compiler".into(),
+                proposal: id.into(),
+                if_match: expected.into(),
+            },
+        )
+    };
+    let accepted = match integrate(&p1.id, &base.version).unwrap() {
+        KnowledgeResponse::Version { version } => version,
+        _ => panic!(),
+    };
+    assert_eq!(
+        integrate(&p2.id, &accepted.version).unwrap_err().kind,
+        ErrorKind::Conflict
+    );
+    assert_eq!(read(&server, "owner").version, accepted.version);
+    let retried = match integrate(&p1.id, &accepted.version).unwrap() {
+        KnowledgeResponse::Version { version } => version,
+        _ => panic!(),
+    };
+    assert_eq!(retried.version, accepted.version);
+    let proposals = match server
+        .execute_knowledge(
+            "owner",
+            KnowledgeRequest::Proposals {
+                store: "team".parse().unwrap(),
+                repository: "compiler".into(),
+            },
+        )
+        .unwrap()
+    {
+        KnowledgeResponse::Proposals { proposals } => proposals,
+        _ => panic!(),
+    };
+    assert!(
+        proposals
+            .iter()
+            .find(|p| p.id == p2.id)
+            .unwrap()
+            .integrated
+            .is_none()
+    );
+}
+
+#[test]
+fn submission_rejects_a_mapping_to_a_missing_owned_document() {
+    let (_temp, server, state, notion, _) = fixture();
+    let base = read(&server, "owner");
+    let mut snapshot = base.snapshot.clone();
+    snapshot.mappings.get_mut(&notion).unwrap().mapping.document = DocumentReference {
+        backend: "local".into(),
+        id: DocumentId::new().to_string(),
+    };
+    let error = server
+        .execute_knowledge(
+            "owner",
+            KnowledgeRequest::Submit {
+                store: "team".parse().unwrap(),
+                repository: "compiler".into(),
+                operation_id: "missing-document".into(),
+                base: base.version.clone(),
+                snapshot,
+            },
+        )
+        .unwrap_err();
+    assert_eq!(error.kind, ErrorKind::InvalidInput);
+    assert!(state.lock().unwrap().proposals.is_empty());
+    assert_eq!(read(&server, "owner").version, base.version);
 }

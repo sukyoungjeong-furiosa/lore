@@ -1,26 +1,20 @@
 # Architecture Overview
 
 Lore connects code to documents and preserves those relationships for reuse.
-
-## Principles
-
-- **Code-centric:** Navigate between code and its context.
-- **Decoupled:** Documents, code relationships, and code have separate ownership and histories.
-- **Agent-native:** Humans and agents discover, edit, and submit knowledge through common operations.
-- **Human-readable:** Content and explanations remain inspectable.
+[Technical Overview](../design.md) explains the system; these documents retain its core contracts.
 
 ## Components
 
 | Component | Responsibility |
 | --- | --- |
 | Document backend | Owns document content and access. Notion and Lore-owned documents are separate capabilities. |
-| Knowledge store | Maintains Lore-owned documents, mappings, accepted central knowledge, working history, and proposals. |
+| Knowledge store | Maintains Lore-owned documents, mappings, working history, proposals, and integrated central knowledge. |
 | Workspace | Associates a code checkout with its knowledge working branch/worktree, pending changes, and projections. |
-| Lore server | Provides authenticated discovery, submission, and integration. Reconciliation agents are optional. |
-| Resolver | Relates recorded code references to a target code state. Model connections and profiles are replaceable. |
-| Interfaces | CLI, editor integrations, and agent interfaces expose these operations. |
+| Lore server | Provides authenticated discovery, submission, and integration without requiring an agent. |
+| Resolver | Relates recorded anchors to a target code state without validating document content. |
+| Interfaces | CLI, editor integrations, and agent interfaces use the same operation semantics. |
 
-A personal central store serves independent working branches and may submit accepted knowledge to a team store. Git can implement history without determining the sharing protocol or hosting service.
+A personal store serves independent working branches and may submit integrated knowledge to a team store. Both relationships use proposals and integration; their submission scope and acceptance policy may differ. Git implements history and worktrees by default without requiring Git transport, GitHub, or hosted PRs.
 
 ## Connections
 
@@ -31,4 +25,13 @@ A personal central store serves independent working branches and may submit acce
 
 Within Lore, remote means the knowledge-sharing connection. A document backend connection and a Git remote are separate concepts.
 
-[Sharing](sharing.md), [workspace](workspace.md), and [synchronization](synchronization.md) define the behavioral contracts.
+## Sharing and Access
+
+- A server may host multiple stores. A Lore remote selects one store; a person may connect to several remotes.
+- Stores may register multiple code repositories and document backends. The same repository or backend may participate in independent stores.
+- Store and resource identities are distinct from display names, endpoints, and credentials. Copying object IDs does not establish shared history.
+- Authorization preserves repository–backend pairing. Mapping metadata access does not grant access to backend document content, and filtered views must not remove inaccessible knowledge.
+- Credentials belong to the execution environment. Local access uses filesystem permissions; server authentication is separate from human or agent authorship.
+- Interfaces distinguish unavailable knowledge, unresolved references, and failures from successful empty results. Discovery identifies its scope without promising complete coverage.
+
+[Knowledge Model](knowledge-model.md), [Workspace](workspace.md), [Synchronization](synchronization.md), and [Code Projection](code-projection.md) define the remaining contracts.

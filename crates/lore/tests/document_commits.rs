@@ -281,6 +281,51 @@ fn proposals_are_inspectable_and_integration_is_conditional_and_idempotent() {
 }
 
 #[test]
+fn local_fast_forward_policy_requires_pull_but_does_not_reapply_accepted_commits() {
+    let s = Setup::new();
+    let status = s.ok(&s.repo, &["status"], None);
+    let path = PathBuf::from(
+        status["workspace"]["local_store"]["directory"]
+            .as_str()
+            .unwrap(),
+    )
+    .join("store.json");
+    let mut descriptor: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    descriptor["integration_policy"] = "fast_forward_only".into();
+    std::fs::write(path, serde_json::to_vec(&descriptor).unwrap()).unwrap();
+    let first = s.ok(&s.peer, &["create", "Agent A"], None);
+    commit(&s, &s.peer, &first);
+    let accepted = s.ok(&s.peer, &["push"], None);
+    assert_eq!(accepted["status"], "integrated");
+    let second = s.ok(&s.repo, &["create", "Agent B"], None);
+    commit(&s, &s.repo, &second);
+    let rejected = s.run(&s.repo, &["push"], None);
+    assert_eq!(rejected.status.code(), Some(3));
+    let rejected: Value = serde_json::from_slice(&rejected.stdout).unwrap();
+    assert_eq!(rejected["status"], "conflict");
+    assert_eq!(
+        s.ok(&s.repo, &["worktree"], None)["central_version"],
+        accepted["central"]["version"]
+    );
+    s.ok(&s.repo, &["pull"], None);
+    let advanced = s.ok(&s.repo, &["push"], None);
+    assert_eq!(advanced["status"], "integrated");
+    assert_ne!(
+        advanced["central"]["version"],
+        accepted["central"]["version"]
+    );
+    let repeated = s.ok(&s.peer, &["push"], None);
+    assert_eq!(
+        repeated["central"]["version"],
+        accepted["central"]["version"]
+    );
+    assert_eq!(
+        s.ok(&s.repo, &["worktree"], None)["central_version"],
+        advanced["central"]["version"]
+    );
+}
+
+#[test]
 fn concurrent_document_changes_preserve_the_proposal_until_explicit_resolution() {
     let s = Setup::new();
     let initial = s.ok(&s.repo, &["create", "Design", "--stdin"], Some("Base"));

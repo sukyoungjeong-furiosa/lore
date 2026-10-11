@@ -5,16 +5,21 @@ Lore distinguishes working commits, change proposals, and accepted central knowl
 ## Commit and Submission
 
 - Commit records selected Lore-owned document or mapping changes on a working branch. It does not publish them to central knowledge.
-- Push submits committed knowledge as an inspectable proposal against an observed accepted baseline. Submission and integration are distinct outcomes.
+- Push submits an immutable proposal with a fixed baseline and proposed state. Submission and integration are distinct outcomes.
+- Local proposals use the working branch's common ancestor with central history. Remote proposals use the destination state last incorporated by Pull.
 - Local Push may integrate a non-conflicting proposal immediately. Proposal-only submission is available; remote submission does not imply acceptance.
 - Remote submission selects documents or mappings explicitly, or explicitly selects all accepted local knowledge. It does not implicitly publish pending workspace changes or copy external document bodies.
+- Selected mappings require their Lore-owned documents in the destination or in the submission; missing dependencies are reported, not implicitly published.
 - Repeating the same submission has one durable outcome. Reusing its operation identity with different content is rejected.
 
 ## Integration
 
-- Integration checks the central version observed during preparation. Independent document and mapping changes can combine; concurrent changes to one entity remain conflicts.
+- Integration conditionally updates the observed central version and publishes the whole proposal or nothing. Independent or identical entity changes can combine; divergent changes to one entity remain conflicts.
+- Final integrated knowledge preserves mappings' Lore-owned document references, including archived documents.
 - Conflicts preserve the proposal, its baseline, and central knowledge. Resolutions are explicit and conditional on the observed states.
-- Accepted revisions are immutable. Integration identifies the actual accepted version; retries do not duplicate acceptance.
+- Integrated revisions are immutable. Repeated integration of an accepted proposal returns its original result even if central knowledge has advanced.
+- `conflict_free` accepts non-conflicting proposals; `fast_forward_only` requires a new proposal's baseline to equal the current central version. Neither policy requires an agent.
+- Stored proposals and integration results remain inspectable and reachable until explicitly removed under a retention policy.
 - Applying results must not discard changes made while an operation was running.
 
 ## Fetch and Pull
@@ -22,14 +27,10 @@ Lore distinguishes working commits, change proposals, and accepted central knowl
 - Fetch retrieves shared knowledge without changing a working branch, pending edits, or incorporation baselines.
 - Pull incorporates accepted knowledge and advances its source baseline only after successful incorporation. Conflicting local and shared changes are not silently resolved.
 - Remote Pull updates local central knowledge. Working branches incorporate those changes with their own Pull.
+- An interrupted incorporation is recovered before newer source state is applied; successful integration must not be mistaken for an unapplied change because baseline publication was interrupted.
+- Baselines are scoped to the local store, repository, and remote connection. Foreign version tokens or matching object IDs do not establish a common ancestor.
 - External document fetch and editing follow the owning backend's contract independently of knowledge synchronization.
 
 ## Code Reconciliation
 
-Integration may associate submitted anchors with the configured canonical code revision through [code projection](code-projection.md). Original references are preserved. Unresolved correspondence does not prevent acceptance; model availability is not required. Reconciliation does not rewrite document content or establish its correctness.
-
-## Storage and Transport
-
-Commit, branch, proposal, and integration are Lore contracts. Git may implement history and worktrees; it does not require Git transport, GitHub, or a hosted PR. A Lore server can accept and integrate proposals through its own authenticated API.
-
-Earlier mapping-only synchronization remains a compatibility interface. Its direct publication does not represent the proposal workflow.
+An optional worker may propose correspondence to a canonical code revision through [code projection](code-projection.md), preserving the original anchor identity and the actual target revision. This is separate from integration; unresolved correspondence or worker unavailability does not prevent submission or conflict-free integration. Code reconciliation neither rewrites document content nor resolves semantic contradictions between documents.

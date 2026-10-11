@@ -45,6 +45,7 @@ impl LocalStoreConnection {
         }
         let descriptor = KnowledgeStoreDescriptor {
             id,
+            integration_policy: Default::default(),
             repositories: BTreeMap::new(),
             backends: Default::default(),
         };

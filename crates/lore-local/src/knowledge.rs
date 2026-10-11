@@ -303,7 +303,16 @@ impl Workspace {
             return Ok(serde_json::json!({"status":"submitted","proposal":proposal}));
         }
         let central = history.resolve("main")?;
-        match history.integrate(&proposal.id, &central) {
+        let policy = state
+            .local_store
+            .as_ref()
+            .unwrap()
+            .descriptor()?
+            .integration_policy;
+        match proposal
+            .check_integration(policy, &central)
+            .and_then(|()| history.integrate(&proposal.id, &central))
+        {
             Ok(version) => {
                 Ok(serde_json::json!({"status":"integrated","proposal":proposal,"central":version}))
             }
@@ -335,9 +344,23 @@ impl Workspace {
     }
 
     pub fn integrate_knowledge(&self, id: &str, expected: &str) -> Result<KnowledgeVersion> {
-        self.knowledge_history(&self.state()?)?
-            .ok_or_else(|| Error::new(ErrorKind::NotInitialized, "Run lore init"))?
-            .integrate(id, expected)
+        let state = self.state()?;
+        let history = self
+            .knowledge_history(&state)?
+            .ok_or_else(|| Error::new(ErrorKind::NotInitialized, "Run lore init"))?;
+        let proposal = history
+            .proposals()?
+            .into_iter()
+            .find(|p| p.id == id)
+            .ok_or_else(|| Error::new(ErrorKind::NotFound, "Proposal does not exist"))?;
+        let policy = state
+            .local_store
+            .as_ref()
+            .unwrap()
+            .descriptor()?
+            .integration_policy;
+        proposal.check_integration(policy, expected)?;
+        history.integrate(id, expected)
     }
 
     pub fn pull_knowledge(&self) -> Result<KnowledgeVersion> {

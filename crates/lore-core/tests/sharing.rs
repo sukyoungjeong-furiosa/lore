@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 fn store(id: &str) -> KnowledgeStoreDescriptor {
     KnowledgeStoreDescriptor {
         id: id.parse().unwrap(),
+        integration_policy: Default::default(),
         repositories: BTreeMap::from([
             (
                 "compiler".into(),
@@ -128,6 +129,7 @@ fn catalogs_are_repository_views_of_a_store_and_reject_unregistered_backends() {
 fn shared_configuration_allows_empty_registrations_and_rejects_credential_fields() {
     let empty = KnowledgeStoreDescriptor {
         id: "empty".parse().unwrap(),
+        integration_policy: Default::default(),
         repositories: BTreeMap::new(),
         backends: BTreeSet::new(),
     };

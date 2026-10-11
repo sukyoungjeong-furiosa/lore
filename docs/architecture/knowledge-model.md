@@ -41,8 +41,8 @@ Links connect documents using conventions supported by their content format and 
 A mapping has a stable identity within its knowledge store, one document reference, one or more code anchors or path scopes in one code repository, and optional explanatory context.
 
 - A document can have zero or more mappings. Creating or editing a mapping does not modify its document.
-- Lore preserves mapping revision history. Mapping authorship and any human confirmation remain distinct from document authorship.
-- A recorded document state describes what was observed when forming the relationship; it does not imply that the backend can retrieve that historical content.
+- Lore preserves mapping revision history. Mapping authorship remains distinct from document authorship.
+- Published mappings to Lore-owned documents require those documents in the destination store. External references and ordinary document links need not be locally available.
 - Failure to retrieve a document does not remove its mappings or establish that it was deleted.
 - Archiving a mapping preserves its identity, explanatory context, references, and history and is reversible. It does not archive its document.
 

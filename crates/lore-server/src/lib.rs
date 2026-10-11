@@ -239,6 +239,7 @@ impl Server {
                     .mappings
                     .retain(|id, _| !visible_base.mappings.contains_key(id));
                 combined.mappings.extend(changed.mappings);
+                combined.validate_document_references()?;
                 Ok(KnowledgeResponse::Proposal {
                     proposal: storage.submit(
                         &format!("{}:{operation_id}", principal.name),
@@ -275,6 +276,7 @@ impl Server {
                         Self::mapping_access(principal, &store, &record.mapping, true)?;
                     }
                 }
+                proposed.check_integration(descriptor.integration_policy, &if_match)?;
                 let mut version = storage.integrate(&proposal, &if_match)?;
                 version.snapshot = filter(&version.snapshot);
                 Ok(KnowledgeResponse::Version { version })
@@ -298,6 +300,7 @@ impl Server {
         }
         Ok(KnowledgeStoreDescriptor {
             id: store.clone(),
+            integration_policy: descriptor.integration_policy,
             repositories: descriptor
                 .repositories
                 .iter()

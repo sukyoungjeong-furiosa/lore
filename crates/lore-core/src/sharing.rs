@@ -56,6 +56,15 @@ pub struct RepositoryRegistration {
     pub canonical_ref: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IntegrationPolicy {
+    #[default]
+    ConflictFree,
+    /// Accepts a new proposal only while its baseline is the current central version.
+    FastForwardOnly,
+}
+
 /// Shared registrations contain resource identities and policy, not personal credentials.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -63,6 +72,8 @@ pub struct KnowledgeStoreDescriptor {
     pub id: KnowledgeStoreId,
     pub repositories: BTreeMap<String, RepositoryRegistration>,
     pub backends: BTreeSet<String>,
+    #[serde(default)]
+    pub integration_policy: IntegrationPolicy,
 }
 
 /// The same mapping ID in two stores identifies two independent relationships.

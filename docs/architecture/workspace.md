@@ -4,8 +4,9 @@ A workspace associates a code checkout with a knowledge working branch and workt
 
 ## Ownership
 
-- Each code worktree has independent recorded changes, a knowledge working branch, synchronization baselines, and projections.
+- Each code worktree has independent recorded changes, a knowledge working branch, editing baselines, and projections.
 - Workspaces using the same local knowledge store and repository share its central branch. Commit alone does not change that branch.
+- Remote incorporation baselines belong to the local store, repository, and remote connection; its worktrees share them, independent stores do not.
 - Immutable revisions and document caches may be shared. Credentials, projections, and pending changes are not committed knowledge.
 - A workspace's selected knowledge view and target code context are separate. Reading central knowledge may project anchors against any associated code worktree.
 

@@ -83,7 +83,7 @@ lore --json server config --repository "<repository-id>" --backend local --backe
 lore server serve --config server.json --data-dir "<server-data-directory>"
 ```
 
-Set the token environment variable specified in the configuration. Register each user and their repository/backend grants separately. The `local` backend grant permits Lore-owned document access.
+Set the token environment variable specified in the configuration. Register each user and their repository/backend grants separately. The `local` backend grant permits Lore-owned document access. A store's `integration_policy` defaults to `conflict_free`; use `fast_forward_only` to accept new proposals only against the current central version. Neither requires an agent.
 
 ```bash
 lore remote add team --url http://localhost:7766 --store "<store-id>"

@@ -117,6 +117,7 @@ impl Setup {
         );
         let descriptor = |id: &str| KnowledgeStoreDescriptor {
             id: id.parse().unwrap(),
+            integration_policy: Default::default(),
             repositories: BTreeMap::from([("compiler".into(), RepositoryRegistration::default())]),
             backends: BTreeSet::from(["notion".into()]),
         };

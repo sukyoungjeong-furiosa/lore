@@ -2,6 +2,81 @@
 
 Lore는 문서와 코드의 관계를 관리하고, 그 관계와 Lore-owned 문서의 변경을 로컬 또는 서버를 통해 공유합니다. 외부 문서 본문은 원래 백엔드에 두며, 코드 참조는 각 checkout의 코드 상태에 맞춰 해석합니다.
 
+```mermaid
+flowchart TB
+    subgraph actors["Actors & Interfaces"]
+        H["Human<br/>VS Code Extension"]
+        A["Coding Agent A<br/>Hook · Skill · CLI"]
+        B["Coding Agent B<br/>Hook · Skill · CLI"]
+    end
+
+    subgraph local["Local Environment"]
+        direction TB
+        subgraph workspaces["Isolated Workspaces"]
+            WA["Code Worktree A<br/>Lore Worktree A"]
+            WB["Code Worktree B<br/>Lore Worktree B"]
+        end
+        MAIN["Local Knowledge Store<br/>main · integrated knowledge"]
+        PROJ["Discovery & Projection<br/>checkout별 코드 탐색 · 대응"]
+    end
+
+    subgraph external["External Systems"]
+        CODE["Code Repository<br/>Git revisions · working changes"]
+        NOTION["Document Backend<br/>Notion"]
+    end
+
+    subgraph remote["Shared Knowledge Stores"]
+        SERVER["Lore Server<br/>인증 · Proposal · Integration"]
+        TEAM["Team Store<br/>shared knowledge"]
+        LAB["Agent-lab Store<br/>experiments / hypotheses"]
+        RECON["Code Reconciliation Agent<br/>canonical ref의 코드 대응<br/>후속 기능"]
+    end
+
+    A -->|"Read · Edit · Commit"| WA
+    B -->|"Read · Edit · Commit"| WB
+    WA -->|"Push proposal → Integration"| MAIN
+    WB -->|"Push proposal → Integration"| MAIN
+    MAIN -.->|"Pull"| WA
+    MAIN -.->|"Pull"| WB
+    H <-->|"Browse · Inspect"| MAIN
+
+    WA <-->|"Discover · Resolve"| PROJ
+    WB <-->|"Discover · Resolve"| PROJ
+    H -.->|"Navigate code"| PROJ
+    PROJ -->|"대상 checkout과 대조"| CODE
+
+    MAIN <-->|"Lore remote<br/>Fetch · Pull · Submit"| SERVER
+    SERVER <--> TEAM
+    SERVER <--> LAB
+
+    PROJ -.->|"문서 참조 · 본문 조회"| NOTION
+    H -.->|"Open in Notion"| NOTION
+    A -.->|"Read via backend tools"| NOTION
+    B -.->|"Read via backend tools"| NOTION
+
+    SERVER -.->|"공유된 Anchor 조회"| RECON
+    RECON -.->|"코드 참조의 보정 제안"| SERVER
+    RECON -.->|"canonical ref와 대조"| CODE
+
+    classDef actor fill:#e6efff,stroke:#6785bd,color:#172b4d
+    classDef store fill:#e6f5eb,stroke:#4e9971,color:#173a2a
+    classDef workspace fill:#fff2de,stroke:#b78c4d,color:#513812
+    classDef external fill:#f1edfa,stroke:#8b77b7,color:#3c2e59
+    classDef service fill:#eaf3f7,stroke:#648a9b,color:#203b48
+    classDef agent fill:#fce8ed,stroke:#c5758a,color:#642d3f
+
+    class H,A,B actor
+    class MAIN,TEAM,LAB store
+    class WA,WB workspace
+    class CODE,NOTION external
+    class PROJ,SERVER service
+    class RECON agent
+```
+
+그림은 한 사람의 로컬 환경과 두 Agent를 예로 듭니다. Agent는 각 작업 사본에서 읽고 수정하며, 사람은 local main에 통합된 지식을 탐색합니다. Discovery와 Projection은 같은 기능을 사용해도 각 checkout의 코드 상태를 대상으로 동작하며, 하나의 공통 Projection을 공유하지 않습니다.
+
+로컬 store는 서버 없이도 사용할 수 있습니다. 팀과 공유할 때는 Lore remote로 서버의 store를 선택하고, 외부 문서의 본문은 별도의 백엔드에서 읽습니다. 하나의 서버가 여러 store를 제공할 수 있으며, store들이 서로 다른 서버에 있어도 같은 연결 구조를 사용합니다. 그림의 Code Reconciliation Agent는 아직 후속 범위이고, 서버의 제출·통합 기능과는 별개의 구성 요소입니다.
+
 이 문서는 Document, Mapping, Projection, Workspace를 정의한 뒤 저장·버전 관리·공유·Agent 연결의 실제 동작을 설명합니다. CLI의 `<...>`는 채울 ID나 값이며, 예시는 작업 대상 코드 checkout에서 `lore init`으로 준비한 workspace를 사용합니다. 현재 구현과 후속 기능은 각각 구분합니다.
 
 ## Document와 문서 백엔드
@@ -95,13 +170,13 @@ Lore-owned 문서에 직접 Anchor를 붙일 때는 다음 명령을 사용합�
 lore attach <document-id> compiler/scheduler.py:100-150
 ```
 
-Mapping의 작성자·수정 이력은 문서의 작성자·수정 이력과 별개입니다. 문서 조회 실패는 Mapping 삭제나 원본 문서 삭제의 근거가 아닙니다. 기록 당시 관찰한 문서 상태도 원래 백엔드가 그 과거 본문을 다시 제공할 수 있다는 보장은 아닙니다.
+Mapping의 작성자·수정 이력은 문서의 작성자·수정 이력과 별개입니다. 문서 조회 실패는 Mapping 삭제나 원본 문서 삭제의 근거가 아닙니다. 현재 Mapping은 외부 문서의 관찰 revision을 기록하지 않으므로, Notion 본문 갱신만으로 연결된 설명의 신선도를 판정하지는 않습니다.
 
 ## Code Projection
 
 Projection은 원본 Anchor를 대상 코드 상태에 대조한 결과입니다. 예를 들어 기록된 `scheduler.py`가 로컬 feature 브랜치에서 `planner.py`로 이동했다면, 원본 참조는 그대로 두고 로컬의 대응 위치를 별도로 제시합니다. 함수가 분리되면 여러 위치가 함께 대응할 수 있고, 여러 후보 중 하나를 확정하지 못할 수도 있습니다. 대응 위치를 찾지 못하는 것도 정상적인 결과입니다.
 
-대상은 커밋된 revision이나 커밋되지 않은 변경을 포함하는 working state일 수 있습니다. 브랜치 이름은 움직이는 참조이므로 결과가 어느 코드 상태에 대한 것인지 구분합니다. 여러 위치가 함께 원본에 대응하는 경우와, 어느 후보가 맞는지 미확정인 경우도 다릅니다. resolver 실패를 대응 위치가 없다는 확정 결과로 처리하지 않습니다.
+대상은 커밋된 revision이나 커밋되지 않은 변경을 포함하는 working state일 수 있습니다. 브랜치 이름은 움직이는 참조이므로 결과가 어느 코드 상태에 대한 것인지 구분합니다. 확립된 대응(Resolved), 미확정 후보(Candidate), 대응을 확립하지 못한 결과(Unresolved)를 구분하고, 여러 위치가 함께 대응하는 경우와 경쟁하는 후보도 구분합니다. resolver 실패를 대응 위치가 없다는 확정 결과로 처리하지 않습니다.
 
 이 결과에는 다음 구분이 유지됩니다.
 
@@ -189,20 +264,7 @@ Knowledge store 하나에 여러 코드 저장소와 여러 문서 백엔드를 
 
 연결 관계를 수로 표현하면 서버는 여러 store를 제공할 수 있고, store와 코드 저장소·문서 백엔드는 각각 N:M 관계입니다. 하나의 문서는 여러 코드 저장소에 연결될 수 있지만, 개별 Mapping은 한 문서와 한 코드 저장소를 연결합니다. 그 안에서 여러 Anchor나 경로 범위를 사용할 수 있습니다. 여러 로컬 remote 이름이 같은 store를 가리킬 수도 있습니다.
 
-구성 요소 사이의 주요 흐름은 다음과 같습니다. 외부 본문을 읽는 경로와 Lore 지식을 공유하는 경로가 구분되어 있습니다.
-
-```mermaid
-flowchart LR
-    C["CLI · VS Code · Agent Hook"] <--> W["Workspace"]
-    W <--> L["로컬 Knowledge store<br/>Lore-owned 문서 · Mapping · 이력"]
-    W <--> D["외부 문서 백엔드<br/>Notion 원본 · 접근 권한"]
-    W --> G["작업 대상 코드<br/>revision · 작업 중 변경"]
-    W --> P["Resolver<br/>코드 대응 해석"]
-    L <-->|"Lore remote 연결 · HTTP"| S["Lore server"]
-    S <--> T["팀 Knowledge store"]
-```
-
-Workspace는 선택한 작업·중앙 View와 알려진 원격 관계에서 관련 문서를 조회하고, 본문을 읽을 때 문서 캐시나 원래 백엔드를 사용합니다. 서버는 팀의 공유 상태를 관리하며, 외부 문서에 대한 개인 인증을 대신 부여하는 역할은 아닙니다. 그림의 Resolver는 필요할 때 호출하며 모든 읽기나 동기화에 개입하지 않습니다.
+첫머리의 그림처럼, Workspace는 선택한 작업·중앙 View와 알려진 원격 관계에서 관련 문서를 조회하고, 본문을 읽을 때 문서 캐시나 원래 백엔드를 사용합니다. 서버는 팀의 공유 상태를 관리하며, 외부 문서에 대한 개인 인증을 대신 부여하는 역할은 아닙니다. Resolver는 필요할 때 호출하며 모든 읽기나 동기화에 개입하지 않습니다.
 
 ### 연결 설정과 실행 환경
 
@@ -260,15 +322,19 @@ lore push --remote team --mapping-id <mapping-id>
 
 원격 Push는 로컬 브랜치 전체를 전송하는 동작이 아닙니다. **마지막 성공한 원격 Pull의 기준 상태를 바탕으로, 선택한 객체를 local main의 현재 상태로 반영한 Proposal을 구성합니다.** 선택하지 않은 객체는 그 기준 상태를 유지하므로 로컬의 다른 문서·Mapping 변경이 함께 제출되지 않습니다. 미커밋 변경이나 외부 문서 본문도 포함하지 않습니다. `--all`은 명시적으로 모든 로컬 중앙 지식을 선택하는 동작입니다.
 
+Mapping이 Lore-owned 문서를 참조한다면 대상 Store에서 가져온 기준 상태에 그 문서가 있거나 함께 제출해야 합니다. 빠진 문서는 자동으로 공유하지 않고 ID를 안내하며, 최종 통합 결과에서도 참조 무결성을 확인합니다. Archive된 문서는 존재와 참조를 유지합니다. 외부 Notion 문서와 본문의 일반 링크에는 같은 존재 조건을 요구하지 않습니다.
+
 `lore proposal --remote team show ...`와 `integrate ...`로 원격 제안을 확인·통합합니다. `lore pull --remote team`은 팀 결과를 local main에 반영하고, 작업 브랜치는 다시 `lore pull`로 반영합니다. 이때 서버 reconciliation은 코드 참조를 보정하는 선택적 역할이며, Proposal 생성이나 지식 통합 그 자체가 아닙니다.
 
 ### Integration과 충돌 처리
 
-서버는 그 제안의 기준과 제안 상태를 이력에 기록하고, Integration에서 현재 중앙과 비교합니다. 서로 다른 객체의 변경은 함께 통합할 수 있지만, 같은 문서나 Mapping을 동시에 수정하면 충돌로 남깁니다. 문서 안의 서로 다른 문장을 수정했다고 자동으로 합치지는 않습니다.
+Proposal의 기준과 제출 내용은 고정됩니다. 로컬 Push의 기준은 작업 브랜치와 중앙의 Git 공통 조상이고, 원격 Push는 마지막 성공한 Pull의 기준을 사용합니다. Integration은 현재 중앙 버전을 조건으로 객체별 3-way 비교를 수행합니다. 서로 다른 객체의 변경이나 동일한 변경은 통합할 수 있지만, 같은 문서나 Mapping의 서로 다른 변경은 충돌로 남깁니다. 문서 안의 서로 다른 문장을 수정했다고 자동으로 합치지는 않습니다.
+
+Proposal은 전체를 통합하거나 중앙을 그대로 둡니다. 이미 통합된 Proposal을 다시 제출·통합하면 당시 결과를 반환하고, 충돌한 Proposal은 원래 기준과 내용을 유지한 채 새 중앙 상태에 대해 다시 시도할 수 있습니다. 조회는 확정된 한 commit의 snapshot을 읽으며, 제출된 Proposal도 Git ref로 보존해 GC 대상이 되지 않게 합니다.
 
 제안, 기준 상태, 중앙 상태를 비교해 해결안을 만들고, 적용할 때 관찰한 상태가 여전히 같은지 확인합니다. 재시도해도 같은 제출을 중복 게시하지 않으며, 작업 중 발생한 로컬 편집을 잃지 않아야 합니다. **Push 성공, 중앙 통합, 작업 브랜치 반영은 서로 다른 결과**입니다.
 
-적용과 통합은 관찰한 버전을 조건으로 수행합니다. 기준 상태는 성공적으로 반영한 뒤에만 전진하고, 충돌이 남으면 제안·기준·중앙 상태를 보존합니다. 사용자나 Agent가 해결안을 준비할 수 있지만, 관련 상태가 바뀌었다면 다시 확인해야 합니다.
+적용과 통합은 관찰한 버전을 조건으로 수행합니다. 기준 상태는 성공적으로 반영한 뒤에만 전진하고, 충돌이 남으면 제안·기준·중앙 상태를 보존합니다. Pull이 중앙 통합 후 기준 저장 전에 중단되면, 다음 실행에서 기존 통합을 확인하고 기준 저장을 마친 뒤 새로운 원격 상태를 반영합니다. 사용자나 Agent가 해결안을 준비할 수 있지만, 관련 상태가 바뀌었다면 다시 확인해야 합니다.
 
 ### Fetch, Pull, 캐시
 
@@ -314,7 +380,7 @@ flowchart TD
 
 ## 다중 Store와 Store 간 제출
 
-하나의 로컬 store는 여러 Lore remote에 연결할 수 있습니다. 연결마다 대상 store와 원격 Pull 기준을 유지하고, Push 대상은 명시적으로 선택합니다. 같은 코드 저장소와 백엔드를 등록했더라도 각 store의 중앙 상태와 이력은 독립적입니다.
+하나의 로컬 store는 여러 Lore remote에 연결할 수 있습니다. 원격 Pull 기준은 출발 로컬 Store, 코드 repository, 대상 연결별로 유지합니다. 같은 로컬 Store를 쓰는 worktree들은 그 기준을 공유하지만 독립 Store는 공유하지 않습니다. Push 대상은 명시적으로 선택하고, 같은 코드 저장소와 백엔드를 등록했더라도 각 Store의 중앙 상태와 이력은 독립적입니다.
 
 예를 들어 `agent-lab`과 `team`을 연결해 Agent의 조사·가설과 팀 지식을 따로 운영할 수 있습니다. 여러 remote 연결은 어느 공간을 조회·제출할지 선택하는 기능이며, store 간의 자유로운 이전이나 승격 추적을 의미하지 않습니다.
 
@@ -326,7 +392,7 @@ flowchart TD
 | 이력도 그대로 옮기는가? | 전체 원본 이력은 전송하지 않습니다. 대상 store의 기준에 맞춰 부모 revision을 다시 기록하고, 대상에서 제안·통합 이력을 만듭니다. store별 revision 토큰은 서로 대체할 수 없습니다. |
 | 승격한 문서를 원래 공간에서 수정하면? | 자동 전파되지 않습니다. 변경을 로컬 중앙에 받아들여 다시 제안해야 합니다. 대상에서도 같은 객체가 수정됐다면 기준 상태와 비교해 충돌을 구분합니다. |
 
-이 경로는 선택한 객체의 상태를 다른 공간에 제안합니다. ID를 유지한다고 원본과 승격본의 관계를 추적하는 것은 아닙니다. 전체 이력 이전, remote 간 직접 전송, 서로 다른 backend 정체성의 재연결은 제공하지 않습니다. 독립적으로 만든 객체를 같은 지식으로 판정하거나 지속적으로 양방향 동기화하는 규칙도 아직 정하지 않았습니다.
+이 경로는 선택한 객체의 상태를 다른 공간에 제안합니다. 반복 제출은 대상에서 Pull한 객체 상태를 기준으로 비교하며, 같은 ID나 다른 Store의 revision 토큰으로 공통 조상을 추론하지 않습니다. ID를 유지한다고 원본과 승격본의 관계를 추적하는 것도 아닙니다. 전체 이력 이전, remote 간 직접 전송, 서로 다른 backend 정체성의 재연결은 제공하지 않습니다. 독립적으로 만든 객체를 같은 지식으로 판정하거나 지속적으로 양방향 동기화하는 규칙도 아직 정하지 않았습니다.
 
 사람에게 노출하기 전에 선별하려면 remote 이름뿐 아니라 사용하는 로컬 store와 발견 범위도 구분해야 합니다. 실험 공간과 팀 공간을 같은 local main에 Pull하면 그 내용은 한 화면에 나타날 수 있습니다. Agent 전용 store는 이런 경계를 활용하는 운영 방식이며, 자동 품질 등급이나 승격 UI를 제공한다는 뜻은 아닙니다.
 
@@ -346,11 +412,13 @@ flowchart TD
 
 서버 하나는 여러 store를 제공하고, 사용자별 repository/backend 조합의 읽기·쓰기 권한을 확인합니다. Lore-owned 본문을 공유할 권한과 Notion Mapping을 볼 권한은 구분되며, Mapping 접근이 Notion 본문 접근을 부여하지 않습니다.
 
-Lore server는 공유 공간의 서비스입니다. 저장소를 선택하고, 요청자를 인증하고, 변경 제안을 받아 통합하는 역할은 모델의 지능에 의존하지 않습니다.
+Lore server는 공유 공간의 서비스입니다. 저장소를 선택하고, 요청자를 인증하고, 변경 제안을 받아 통합하는 역할은 모델의 지능에 의존하지 않습니다. Store의 기본 `conflict_free` 정책은 충돌 없는 변경을 통합하고, `fast_forward_only` 정책은 새 Proposal의 기준과 현재 중앙 버전이 같을 때만 통합합니다. 두 정책 모두 중앙 Agent 없이 동작하며, 이미 통합된 제안의 재시도에는 기존 결과를 반환합니다.
 
-Push는 지식 변경 제안을 저장하고, Integration은 그 제안을 공유 이력에 받아들입니다. **Reconciliation은 제출된 코드 참조를 canonical ref에 대응시키는 별도의 역할**입니다. 예를 들어 `upstream/master`에 대응하는 위치를 기록할 수 있지만, 모든 사용자의 코드 checkout을 그 ref에 맞추거나 문서 본문을 다시 쓰지 않습니다. 대응하지 못하면 원본과 미해결 상태를 보존합니다. 서버의 상시 reconciliation worker는 아직 후속 범위입니다.
+Push는 지식 변경 제안을 저장하고, Integration은 그 제안을 공유 이력에 받아들입니다. **Reconciliation은 제출된 코드 참조를 canonical ref에 대응시키는 별도의 역할**입니다. 예를 들어 `upstream/master`에 대응하는 위치를 기록할 수 있지만, 모든 사용자의 코드 checkout을 그 ref에 맞추거나 문서 본문을 다시 쓰지 않습니다. 결과는 원본 Anchor의 정체성과 실제 대상 코드 revision을 유지하고, 대응하지 못하면 원본과 미해결 상태를 보존합니다. 서버의 상시 reconciliation worker는 아직 후속 범위입니다.
 
 별도의 Agent나 worker는 이 코드 대응을 보정하거나 오래된 관계를 조사하는 역할을 맡을 수 있습니다. 하지만 이런 Agent가 없거나 일시적으로 동작하지 않는다고 Push/Pull까지 멈추게 만들지는 않습니다. 원래 참조를 보존한 채 공유하고, 대응이 해결되지 않은 상태를 구분할 수 있어야 합니다.
+
+문서끼리의 모순, 적용 조건, 반례를 해석하는 지식 정리는 코드 참조 보정과도 별개입니다. 필요하면 Agent가 일반 문서 수정·Proposal로 제안하며, 기술적으로 통합됐다는 사실만으로 서로 다른 설명이 의미적으로 조정됐다고 보지 않습니다.
 
 서버 자체가 내려가면 원격 제출은 할 수 없습니다. 그래도 이미 가진 문서와 관계를 읽고, 로컬 작업을 기록·커밋하고, 로컬 중앙에 제출하는 일은 계속할 수 있습니다. 모델이 필요한 새로운 Projection이나 아직 가져오지 않은 외부 문서까지 오프라인에서 제공한다고 약속하는 것은 아닙니다.
 
@@ -364,7 +432,7 @@ Agent도 사람과 같은 관계를 사용하지만, 발견을 위한 인터페�
 
 예를 들어 `src/scheduler/**`에 연결된 Lore가 있다면, Agent의 문맥에 해당 경로가 등장했을 때 Hook이 문서 참조와 관련 코드 범위를 소개할 수 있습니다. 특정 명령의 `cat`, `sed`, `rg` 문법을 각각 해석해서 모든 파일 접근을 추적하는 방식에 의존하지 않습니다. 현재 adapter는 도구 입출력의 경로 언급을 이용하므로 best-effort discovery이며, 실제 파일 접근을 완벽하게 감지하는 기능은 아닙니다.
 
-자동 소개는 본문 전체를 무조건 주입하지 않습니다. 관련 Lore가 있다는 사실, 문서 참조, 기록된 코드 범위를 먼저 전달하고, Agent가 필요한 문서를 선택해 읽게 합니다. 라인은 참조 당시 위치일 수 있으므로 현재 코드와의 대응이 필요하면 Projection을 조회합니다. 같은 Agent 세션에서는 문서를 자동으로 최대 한 번 소개하고, 명시적 discovery와 읽기는 언제든 허용합니다.
+자동 소개는 본문 전체를 무조건 주입하지 않습니다. 관련 Lore가 있다는 사실, 문서 참조, 기록된 코드 범위를 먼저 전달하고, Agent가 필요한 문서를 선택해 읽게 합니다. Mapping 메타데이터는 Lore의 공유 권한을 따르며 Notion 본문 권한을 대신하지 않습니다. 라인은 참조 당시 위치일 수 있으므로 현재 코드와의 대응이 필요하면 Projection을 조회합니다. 같은 Agent 세션에서는 문서를 자동으로 최대 한 번 소개하고, 명시적 discovery와 읽기는 언제든 허용합니다.
 
 ### 기록 시점은 Hook·skill 정책이 결정합니다
 
@@ -380,7 +448,7 @@ Lore CLI는 작성·선택적 Commit·Push·Integration을 제공합니다. Hook
 
 현재 기본 정책에서는 Stop 요청 → Agent의 기록 판단 → 문서 작성 → Commit → 로컬 Push가 이어지고, 충돌이 없으면 local main에 나타납니다. 충돌이 있으면 제안을 남기며 자동으로 해결하지 않습니다. **Hook 스크립트가 문서를 생성하거나 Push하는 것은 아니며, Agent가 skill에 따라 실행합니다.** 팀 remote 제출은 별도 지시가 있어야 합니다.
 
-기록 skill은 proposal-only 제출이나 별도 store에 기록하는 정책으로 교체할 수 있습니다. Hook, 읽기 skill, 기록 skill, 코드 대응 resolver의 책임도 분리되어 있으므로, 특정 언어의 안내나 모델 프롬프트를 제품의 고정 규칙으로 삼지 않습니다.
+기록 skill은 proposal-only 제출이나 별도 store에 기록하는 정책으로 교체할 수 있습니다. 세션 내 Hook 중복 방지는 서로 다른 Agent가 같은 결론을 기록하는 것까지 막지는 않습니다. Hook, 읽기 skill, 기록 skill, 코드 대응 resolver의 책임도 분리되어 있으므로, 특정 언어의 안내나 모델 프롬프트를 제품의 고정 규칙으로 삼지 않습니다.
 
 Agent가 기존 Notion 도구로 본문을 읽어도 코드 관계는 Lore에 남길 수 있습니다. 새 실험 결론을 Lore-owned 문서로 남기거나, 기존 문서에 매핑만 추가하는 것도 가능합니다. 현재 Agent 연결의 중심은 구조화된 CLI 결과와 실행형 Hook·skill이고, MCP 같은 인터페이스도 같은 작업 의미를 따르는 방향입니다.
 
@@ -413,6 +481,6 @@ Google은 Code Wiki를 코드베이스를 분석해 변경에 맞춰 문서를 �
 
 **Jupyter notebook (`.ipynb`) 본문과 추가 문서 형식 지원**, 서버의 상시 reconciliation worker, 더 세밀한 원격 부분 조회, 더 풍부한 위키 탐색과 추가 문서 백엔드는 발전시킬 영역입니다. 출처와 별개인 검토 기록, 작업 지식의 자동 소개, store 간 승격 관계와 이력 이전도 구체화할 영역입니다. 이 항목들을 현재 제공하는 기능으로 가정하지 않습니다.
 
-세부 행동 계약은 [Knowledge Model](architecture/knowledge-model.md), [Sharing](architecture/sharing.md), [Workspace](architecture/workspace.md), [Synchronization](architecture/synchronization.md), [Code Projection](architecture/code-projection.md)을 참고합니다. 사용자 경험의 의도는 [Experience](experience.md)를 참고할 수 있습니다.
+핵심 행동 계약은 [Architecture](architecture/overview.md), [Knowledge Model](architecture/knowledge-model.md), [Workspace](architecture/workspace.md), [Synchronization](architecture/synchronization.md), [Code Projection](architecture/code-projection.md)에 남깁니다. 사용자 경험의 의도는 [Experience](experience.md)를 참고할 수 있습니다.
 
 기존 매핑 전용 동기화 명령은 호환성을 위해 남아 있습니다. 새 지식 공유는 이 문서의 commit → proposal → integration 흐름을 기준으로 사용합니다. 실제 모델의 대응 품질과 운영 환경의 부하·배포 검증은 기능 계약이나 모의 API 테스트만으로 확인할 수 없으므로 별도의 검증이 필요합니다.

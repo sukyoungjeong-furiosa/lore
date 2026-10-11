@@ -535,6 +535,7 @@ impl GitKnowledgeStore {
         if self.proposal_path(&id)?.exists() {
             return Ok(self.load_proposal(&id)?.proposal);
         }
+        self.read_at(&head)?.validate_document_references()?;
         self.record_proposal(&id, &base, &head, branch, hash(&head))
     }
 
@@ -794,6 +795,7 @@ impl KnowledgeStore for GitKnowledgeStore {
         snapshot: &KnowledgeSnapshot,
     ) -> Result<KnowledgeProposal> {
         snapshot.validate(&self.repository)?;
+        snapshot.validate_document_references()?;
         let _lock = self.lock()?;
         let base = self.resolve(base)?;
         // Remote clients may propose only against accepted history, never another user's private branch.
@@ -864,6 +866,15 @@ impl KnowledgeStore for GitKnowledgeStore {
                 &self.read_at(&proposal.head)?,
             )?,
         )?;
+        merged.validate_document_references().map_err(|error| {
+            Error::new(
+                ErrorKind::Conflict,
+                format!(
+                    "Integration would break document references: {}",
+                    error.message
+                ),
+            )
+        })?;
         let commit = self.make_commit(
             &merged,
             &[&central, &proposal.head],
