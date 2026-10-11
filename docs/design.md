@@ -274,6 +274,16 @@ CLI, VS Code, Hook은 공통 작업 의미를 사용합니다. 문서 백엔드,
 
 설치·서버·모델 연결의 구체적인 명령은 [README](../README.md), Agent 설정은 [Codex 연결 안내](../integrations/codex/README.md)를 참고합니다.
 
+### 독립적인 구성 요소와 단계적 활용
+
+로컬 Knowledge Store에 기존 Notion 문서와 코드의 관계를 기록하면, 개발자는 VS Code에서 코드를 탐색하며 관련 설계 문서를 함께 읽고 연결을 관리할 수 있습니다.
+
+Agent Hook을 연결하면 Coding Agent도 같은 지식을 발견하고 활용합니다. Agent가 새 문서나 코드 관계를 기록·통합하면 이후 작업에서도 재사용할 수 있습니다.
+
+복수 worktree에서는 각자의 지식 작업을 격리하고 local main에 통합합니다. Lore remote는 이 공유 범위를 팀이나 별도의 지식 공간으로 확장합니다. 향후 Reconciliation Agent를 연결하면 공유된 코드 참조의 유지·보정을 자동화할 수 있습니다.
+
+각 기능은 공통의 Document, Mapping, Workspace 모델을 사용하며, 작업 환경에 따라 개별적으로 활용하거나 조합할 수 있습니다.
+
 ## 버전 관리와 지식 공유
 
 현재 Git이 Lore의 커밋·브랜치·worktree 이력을 저장합니다. 코드 저장소와 별개의 이력이며 GitHub 게시나 Git 전송 프로토콜을 요구하지 않습니다. 버전 관리되는 지식 상태에는 Lore-owned 문서와 Mapping이 들어가고, 외부 문서 본문·캐시·자격 증명·Projection은 들어가지 않습니다.
