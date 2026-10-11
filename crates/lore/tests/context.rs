@@ -165,6 +165,36 @@ fn hook_documents(output: Output) -> Vec<Value> {
 }
 
 #[test]
+fn unavailable_remote_configuration_does_not_prevent_local_discovery() {
+    let s = Setup::new();
+    let document = s.ok(&["create", "Available local knowledge"]);
+    let id = document["document"]["id"].as_str().unwrap();
+    s.ok(&["attach", id, "src/scheduler/plan.rs:2"]);
+    s.ok(&[
+        "remote",
+        "add",
+        "gone",
+        "--store",
+        "gone-store",
+        "--url",
+        "http://127.0.0.1:1",
+    ]);
+    s.ok(&["remote", "connect", "gone"]);
+    s.ok(&["remote", "remove", "gone"]);
+    let result = s.ok(&["context", "discover", "src/scheduler/plan.rs", "--cached"]);
+    assert_eq!(result["documents"].as_array().unwrap().len(), 1);
+    assert_eq!(result["documents"][0]["document"]["id"], id);
+    assert_eq!(result["shared_available"], false);
+    assert!(
+        result["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|warning| { warning.as_str().unwrap().contains("Lore remote gone") })
+    );
+}
+
+#[test]
 fn automatic_introduction_is_once_per_document_and_explicit_access_remains_available() {
     let s = Setup::new();
     let mapping = s.shared_scope(PAGE);

@@ -25,6 +25,15 @@ pub struct SelectedStore {
 }
 
 impl SelectedStore {
+    fn catalog_cache(&self, home: &Path) -> Result<RemoteCatalogCache> {
+        match &self.connection {
+            Connection::Local(_) => Ok(RemoteCatalogCache::new(home)),
+            Connection::Http { name, connection } => {
+                RemoteCatalogCache::for_remote(home, name, connection)
+            }
+        }
+    }
+
     fn connect(&self, workspace: &Workspace) -> Result<()> {
         match &self.connection {
             Connection::Local(connection) => workspace.connect_local_store(connection),
@@ -109,7 +118,8 @@ pub fn pull(
     let target = select(workspace, home, remote, local)?;
     let store = &target.store;
     target.connect(workspace)?;
-    let observation = RemoteCatalogCache::new(home)
+    let observation = target
+        .catalog_cache(home)?
         .fetch(target.client.as_ref(), &workspace.code.repository_id)?;
     let requested = path.map(|path| super::scope(workspace, path)).transpose()?;
     let recursive = path.is_some_and(|path| workspace.code.root.join(path).is_dir());
@@ -176,7 +186,7 @@ pub fn fetch(
             id,
         )?)?);
     }
-    Ok(serde_json::to_value(RemoteCatalogCache::new(home).fetch(
+    Ok(serde_json::to_value(target.catalog_cache(home)?.fetch(
         target.client.as_ref(),
         &workspace.code.repository_id,
     )?)?)

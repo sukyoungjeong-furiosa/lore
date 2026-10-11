@@ -168,7 +168,7 @@ impl Workspace {
                         "Configured remote now selects a different store; reconnect explicitly",
                     ));
                 }
-                let cache = RemoteCatalogCache::new(home);
+                let cache = RemoteCatalogCache::for_remote(home, name, &connection)?;
                 if !refresh {
                     match cache.read(store, &self.code.repository_id) {
                         Ok(observation) => return Ok(observation),
@@ -247,9 +247,28 @@ impl Workspace {
                 Err(error) => warnings.push(format!("Local store {store}: {}", error.message)),
             }
         }
-        for name in state.connected_remotes.values() {
-            if let Some(version) = self.cached_remote_knowledge(home, name)? {
-                let source = RemoteRegistry::new(home).get(name)?.store;
+        for (source, name) in &state.connected_remotes {
+            let cached_knowledge = (|| {
+                let connection = RemoteRegistry::new(home).get(name)?;
+                if connection.store != *source {
+                    return Err(lore_core::Error::new(
+                        ErrorKind::Conflict,
+                        "Configured remote now selects a different store; reconnect explicitly",
+                    ));
+                }
+                self.cached_remote_knowledge(home, name)
+            })();
+            let version = match cached_knowledge {
+                Ok(version) => version,
+                Err(error) => {
+                    let warning = format!("Lore remote {name}: {}", error.message);
+                    if !warnings.contains(&warning) {
+                        warnings.push(warning);
+                    }
+                    continue;
+                }
+            };
+            if let Some(version) = version {
                 for record in version.snapshot.documents.into_values() {
                     let document = LoreDocument::Local {
                         id: record.document.id,
@@ -283,7 +302,7 @@ impl Workspace {
                     };
                     if !mapping.archived && !excluded.contains(&document) {
                         documents.push(RoutingDocument {
-                            store: Some(RemoteRegistry::new(home).get(name)?.store),
+                            store: Some(source.clone()),
                             mapping: Some(mapping.id),
                             document,
                             title: None,

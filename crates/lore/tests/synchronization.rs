@@ -203,6 +203,47 @@ impl Setup {
 }
 
 #[test]
+fn discovery_does_not_reuse_another_connections_catalog_for_the_same_store() {
+    let setup = Setup::new();
+    let mapping = setup.create("src/scheduler.rs:1", "00000000-0000-4000-8000-000000000001");
+    let id = mapping["record"]["mapping"]["id"].as_str().unwrap();
+    setup.alice.ok(&["push", "--remote", "team", id]);
+    setup.bob.ok(&["map", "fetch", "--remote", "team"]);
+    setup.bob.ok(&["remote", "connect", "team"]);
+    let known = setup
+        .bob
+        .ok(&["context", "discover", "src/scheduler.rs", "--cached"]);
+    assert_eq!(known["documents"].as_array().unwrap().len(), 1);
+
+    setup.bob.connect(
+        "restricted",
+        "team",
+        &setup.daemon.url,
+        "invalid-test-token",
+    );
+    setup.bob.ok(&["remote", "connect", "restricted"]);
+    let isolated = setup
+        .bob
+        .ok(&["context", "discover", "src/scheduler.rs", "--cached"]);
+    assert!(isolated["documents"].as_array().unwrap().is_empty());
+    assert!(!isolated["warnings"].as_array().unwrap().is_empty());
+    let denied = setup
+        .bob
+        .ok(&["context", "discover", "src/scheduler.rs", "--refresh"]);
+    assert!(denied["documents"].as_array().unwrap().is_empty());
+
+    setup.bob.ok(&["remote", "connect", "team"]);
+    setup
+        .bob
+        .ok(&["remote", "set-url", "team", "http://127.0.0.1:1"]);
+    let retargeted = setup
+        .bob
+        .ok(&["context", "discover", "src/scheduler.rs", "--cached"]);
+    assert!(retargeted["documents"].as_array().unwrap().is_empty());
+    assert!(!retargeted["warnings"].as_array().unwrap().is_empty());
+}
+
+#[test]
 fn two_users_share_mapping_history_discovery_projection_and_explicit_conflict_resolution() {
     let setup = Setup::new();
     let first = setup.create("src/scheduler.rs:1", "00000000-0000-4000-8000-000000000001");

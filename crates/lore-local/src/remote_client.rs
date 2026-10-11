@@ -223,6 +223,20 @@ impl RemoteCatalogCache {
         }
     }
 
+    /// Remote catalogs are private to a named connection and its endpoint and credential configuration.
+    pub fn for_remote(home: &Path, name: &str, connection: &LoreRemote) -> Result<Self> {
+        connection.validate()?;
+        let key = serde_json::to_vec(&(
+            name,
+            &connection.store,
+            &connection.server_url,
+            &connection.token_env,
+        ))?;
+        Ok(Self {
+            directory: home.join("remote-catalogs/v2").join(hash(key)),
+        })
+    }
+
     fn path(&self, store: &KnowledgeStoreId, repository: &str) -> PathBuf {
         self.directory
             .join(hash(store.as_str()))
