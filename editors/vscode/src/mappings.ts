@@ -9,6 +9,7 @@ export interface MappingEntry {
   selection?: SelectedDocument;
   anchor?: string;
   mapping?: string;
+  store?: string | null;
   location?: Location;
 }
 interface ConnectionsState { view?: View; mappings?: LocatedMapping[] }
@@ -29,7 +30,7 @@ export class Mappings implements vscode.TreeDataProvider<MappingEntry>, vscode.D
     this.state = selected ? this.load(selected) : undefined;
     void this.state?.then(state => {
       if (generation !== this.generation) return;
-      const count = state.view ? state.view.document.anchors.length : (state.mappings || []).reduce((n, { view }) => n + view.record.mapping.anchors.length + (view.record.mapping.scopes || []).length, 0);
+      const count = (state.view?.document.anchors.length || 0) + (state.mappings || []).reduce((n, { view }) => n + view.record.mapping.anchors.length + (view.record.mapping.scopes || []).length, 0);
       this.summary = { count }; this.summaryEvent.fire();
     }, () => {
       if (generation !== this.generation) return;
@@ -45,14 +46,15 @@ export class Mappings implements vscode.TreeDataProvider<MappingEntry>, vscode.D
     return `${this.selected.title} · ${status}`;
   }
   private async load(selected: SelectedDocument): Promise<ConnectionsState> {
-    if (selected.source.kind === 'backend') {
-      const ref = selected.source.reference;
-      const listed = await call<{ mappings: LocatedMapping[] }>(selected.root, ['map', 'ls']);
-      return { mappings: listed.mappings.filter(({ view }) => view.record.mapping.document.backend === ref.backend && view.record.mapping.document.id === ref.id) };
-    }
-    const args = ['show', selected.source.id]; if (selected.source.revision) args.push('--revision', selected.source.revision);
-    return { view: await call<View>(selected.root, args) };
+    const central = selected.source.kind === 'local' && selected.source.working ? [] : ['--central'];
+    const reference = selected.source.kind === 'backend' ? selected.source.reference : { backend: 'local', id: selected.source.id };
+    const mappings = selected.source.kind === 'local' && selected.source.revision ? [] : (await call<{ mappings: LocatedMapping[] }>(selected.root, [...central, 'map', 'ls'])).mappings.filter(({ view }) => view.record.mapping.document.backend === reference.backend && view.record.mapping.document.id === reference.id);
+    if (selected.source.kind === 'backend') return { mappings };
+    const args = [...central, 'show', selected.source.id];
+    if (selected.source.revision) args.push('--revision', selected.source.revision);
+    return { view: await call<View>(selected.root, args), mappings };
   }
+
   getTreeItem(entry: MappingEntry): vscode.TreeItem {
     const tree = new vscode.TreeItem(entry.label);
     tree.description = entry.description;
@@ -71,16 +73,15 @@ export class Mappings implements vscode.TreeDataProvider<MappingEntry>, vscode.D
     try {
       const state = await this.state!;
       let result: MappingEntry[];
-      if (selected.source.kind === 'backend') {
-        const located = await Promise.all(state.mappings!.map(({ view }) => call<LocatedMapping>(selected.root, ['map', 'resolve', view.record.mapping.id])));
-        result = located.flatMap(({ view, projections }) => [
-          ...this.entries(selected, view.record.mapping.anchors, projections, view.record.mapping.context, view.record.mapping.id),
-          ...(view.record.mapping.scopes || []).map(scope => ({ label: scope.glob, description: 'Code scope', detail: [scope.repository, view.record.mapping.context].filter(Boolean).join('\n') }))
-        ]);
-      } else {
-        const view = state.view!;
-        const projections = selected.source.revision ? [] : (await call<{ projections: Projection[] }>(selected.root, ['resolve', selected.source.id])).projections;
-        result = this.entries(selected, view.document.anchors, projections, '', undefined, !!selected.source.revision);
+      const central = selected.source.kind === 'local' && selected.source.working ? [] : ['--central'];
+      const located = await Promise.all((state.mappings || []).map(({ view, store }) => call<LocatedMapping>(selected.root, [...central, 'map', 'resolve', view.record.mapping.id, ...(store ? ['--store', store] : [])])));
+      result = located.flatMap(({ view, projections, store }) => [
+        ...this.entries(selected, view.record.mapping.anchors, projections, view.record.mapping.context, view.record.mapping.id).map(entry => ({ ...entry, store, detail: [entry.detail, store ? `Store: ${store}` : ''].filter(Boolean).join('\n') })),
+        ...(view.record.mapping.scopes || []).map(scope => ({ label: scope.glob, description: 'Code scope', detail: [scope.repository, view.record.mapping.context].filter(Boolean).join('\n') }))
+      ]);
+      if (selected.source.kind === 'local') {
+        const projections = selected.source.revision ? [] : (await call<{ projections: Projection[] }>(selected.root, [...central, 'resolve', selected.source.id])).projections;
+        result.push(...this.entries(selected, state.view!.document.anchors, projections, '', undefined, !!selected.source.revision));
       }
       if (generation !== this.generation) return this.getChildren();
       return result.length ? result : [{ label: 'No connected code' }];
@@ -104,8 +105,8 @@ export class Mappings implements vscode.TreeDataProvider<MappingEntry>, vscode.D
     if (this.selected !== selected) throw new Error('The selected document changed. Choose its current code connection.');
     if (!entry.mapping && selected.source.kind !== 'local') return;
     const result = entry.mapping
-      ? await call<LocatedMapping>(selected.root, ['map', 'resolve', entry.mapping])
-      : await call<{ projections: Projection[] }>(selected.root, ['resolve', selected.source.kind === 'local' ? selected.source.id : '']);
+      ? await call<LocatedMapping>(selected.root, [...(selected.source.kind==='local' && selected.source.working ? [] : ['--central']), 'map', 'resolve', entry.mapping, ...(entry.store ? ['--store', entry.store] : [])])
+      : await call<{ projections: Projection[] }>(selected.root, [...(selected.source.kind==='local' && selected.source.working ? [] : ['--central']), 'resolve', selected.source.kind === 'local' ? selected.source.id : '']);
     const location = result.projections.find(p => p.anchor === entry.anchor)?.locations.find(l => l.path === entry.location!.path && l.start === entry.location!.start && l.end === entry.location!.end);
     if (this.selected !== selected) return;
     if (!location) { this.refresh(); throw new Error('Code correspondence changed. Choose a refreshed code connection.'); }

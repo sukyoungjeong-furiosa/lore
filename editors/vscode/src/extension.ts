@@ -8,6 +8,7 @@ import { DocumentSurface, SelectedDocument } from './document-surface';
 import { Knowledge, KnowledgeEntry } from './knowledge';
 import { KnowledgeView } from './knowledge-view';
 import { Mappings, MappingEntry } from './mappings';
+import { registerResolverCommands } from './resolver';
 type Root = vscode.WorkspaceFolder;
 interface Entry { label: string; root: Root; view?: View; children?: Entry[]; error?: string }
 class Documents implements vscode.TreeDataProvider<Entry>, vscode.Disposable {
@@ -34,12 +35,14 @@ class Documents implements vscode.TreeDataProvider<Entry>, vscode.Disposable {
     const result: Entry[] = [];
     for (const root of vscode.workspace.workspaceFolders || []) {
       try {
-        const status = await call<{ state_path: string }>(root.uri.fsPath, ['status']);
-        if (!this.watchers.has(status.state_path)) {
-          const changed = () => this.onExternalChange(); fs.watchFile(status.state_path, { interval: 800, persistent: false }, changed);
-          this.watchers.set(status.state_path, { dispose: () => fs.unwatchFile(status.state_path, changed) });
+        const status = await call<{ state_path: string; document_store_state_path?: string | null }>(root.uri.fsPath, ['status']);
+        for (const path of [status.state_path, status.document_store_state_path].filter((path): path is string => !!path)) {
+          if (!this.watchers.has(path)) {
+            const changed = () => this.onExternalChange(); fs.watchFile(path, { interval: 800, persistent: false }, changed);
+            this.watchers.set(path, { dispose: () => fs.unwatchFile(path, changed) });
+          }
         }
-        const args = ['ls'];
+        const args = ['--central', 'ls'];
         if (this.archived) args.push('--include-archived');
         const response = await call<{ documents: Located[] }>(root.uri.fsPath, args);
         const children: Entry[] = [];
@@ -111,9 +114,10 @@ export function activate(context: vscode.ExtensionContext) {
     if (!root) throw new Error('Open or select a code workspace first');
     return root.root;
   }
-  async function open(id: string, root: string) {
+  async function open(id: string, root: string, working = false) {
     let panel = panels.get(root);
     if (!panel || panel.isDisposed()) { panel = new KnowledgePanel(root, surface, refresh); panels.set(root, panel); context.subscriptions.push(panel); }
+    if (working) panel.markWorking(id);
     await panel.open(id);
   }
   async function openBackend(reference: DocumentReference, root: string) {
@@ -128,7 +132,7 @@ export function activate(context: vscode.ExtensionContext) {
     const configs = await call<Record<string, BackendConfiguration>>(root, ['backend', 'list']);
     const names = Object.keys(configs);
     if (!names.length) throw new Error('Run Lore: Connect Notion first.');
-    return names.length === 1 ? names[0] : vscode.window.showQuickPick(names, { placeHolder: 'Select a knowledge backend' });
+    return names.length === 1 ? names[0] : vscode.window.showQuickPick(names, { placeHolder: 'Select a document backend' });
   }
   function command(name: string, handler: (...args: any[]) => Promise<unknown> | unknown) {
     context.subscriptions.push(vscode.commands.registerCommand(name, async (...args: unknown[]) => {
@@ -136,9 +140,10 @@ export function activate(context: vscode.ExtensionContext) {
     }));
   }
   command('lore.init', async (path?: string) => { const root = await rootFor(path); await call(root, ['init']); refresh(); });
+  registerResolverCommands(command, rootFor);
   command('lore.connectNotion', async () => {
     const root = await rootFor();
-    const name = await vscode.window.showInputBox({ prompt: 'Connection ID (e.g. notion). Document references use this ID.' }); if (!name) return;
+    const name = await vscode.window.showInputBox({ prompt: 'Document backend ID (e.g. notion). Document references use this ID.' }); if (!name) return;
     const page = await vscode.window.showInputBox({ prompt: 'Root Notion page URL or ID' }); if (!page) return;
     await call(root, ['backend', 'add-notion', name, '--root', page]);
     refresh(); await vscode.commands.executeCommand('lore.setBackendToken', name, root);
@@ -155,6 +160,7 @@ export function activate(context: vscode.ExtensionContext) {
     await openBackend(reference, await rootFor(path));
   });
   command('lore.reloadDocument', () => surface.reload());
+  command('lore.publishDocument', () => surface.invokeLocalAction('publish'));
   command('lore.editDocument', () => surface.invokeLocalAction('edit'));
   command('lore.archiveDocument', () => surface.invokeLocalAction('archive'));
   command('lore.restoreDocument', () => surface.invokeLocalAction('archive'));
@@ -212,7 +218,7 @@ export function activate(context: vscode.ExtensionContext) {
   command('lore.create', async (path?: string) => {
     const root = await rootFor(path);
     const title = await vscode.window.showInputBox({ prompt: 'Document title' }); if (!title) return;
-    const view = await call<View>(root, ['create', title]); refresh(); await open(view.document.id, root);
+    const view = await call<View>(root, ['create', title]); refresh(); await open(view.document.id, root, true);
   });
   command('lore.open', async (id: string, path?: string) => { if (typeof id !== 'string') return; await open(id, await rootFor(path)); });
   command('lore.search', () => tree.toggleFilter());
@@ -226,7 +232,7 @@ export function activate(context: vscode.ExtensionContext) {
     if (!selected) {
       const choices: (vscode.QuickPickItem & { source?: SelectedDocument['source']; manual?: boolean })[] = [];
       try {
-        const local = await call<{ documents: Located[] }>(root, ['ls']);
+        const local = await call<{ documents: Located[] }>(root, ['--central', 'ls']);
         choices.push(...local.documents.map(({ view }) => ({ label: view.document.title, description: 'Local Documents', source: { kind: 'local' as const, id: view.document.id } })));
       } catch (error) { if (!(error instanceof LoreError && error.kind === 'not_initialized')) throw error; }
       const configs = await call<Record<string, BackendConfiguration>>(root, ['backend', 'list']);
@@ -249,16 +255,24 @@ export function activate(context: vscode.ExtensionContext) {
       if (!source) return;
       selected = { root, title: chosen.label, source };
     }
+    if (selected.source.kind === 'local' && selected.source.revision) throw new Error('Open the current document revision before linking code.');
+    const pending = await call<{ unsubmitted_documents: string[]; unsubmitted_mappings: string[] }>(root,['worktree']);
+    if (pending.unsubmitted_documents.length || pending.unsubmitted_mappings.length) throw new Error('This branch has committed changes awaiting submission. Inspect and submit them with the Lore CLI before creating a shared code link.');
+    const reference = selected.source.kind === 'local' ? { backend: 'local', id: selected.source.id } : selected.source.reference;
     if (selected.source.kind === 'local') {
-      if (selected.source.revision) throw new Error('Open the current document revision before linking code.');
-      const view = await call<View>(root, ['show', selected.source.id]);
-      await call(root, ['attach', view.document.id, location, '--if-match', view.revision]);
-      refresh(); await open(view.document.id, root);
-    } else {
-      const reference = selected.source.reference;
-      await call(root, ['map', 'create', reference.backend, reference.id, location]);
-      refresh(); await openBackend(reference, root);
+      await call(root, ['pull']);
+      try { await call<View>(root, ['--central', 'show', reference.id]); }
+      catch (error) {
+        if (error instanceof LoreError && error.kind === 'not_found') throw new Error('Publish the new document before creating a shared code link, or use the CLI to commit the document and mapping together.');
+        throw error;
+      }
     }
+    const created=await call<import('./client').MappingView>(root, ['map', 'create', reference.backend, reference.id, location]);
+    await call(root,['commit',created.record.mapping.id,'--mapping','--if-match',created.revision]);
+    await call(root,['push']);
+    refresh();
+    if (selected.source.kind === 'local') await open(reference.id, root);
+    else await openBackend(reference, root);
   });
   command('lore.attachNotion', () => vscode.commands.executeCommand('lore.attach'));
   let refreshing: Promise<void> | undefined;
@@ -321,12 +335,12 @@ export function activate(context: vscode.ExtensionContext) {
       const root = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath; if (!root) return [];
       try {
         const [result, mapped] = await Promise.all([
-          call<{ documents: Located[] }>(root, ['ls', document.uri.fsPath]),
-          call<{ mappings: LocatedMapping[] }>(root, ['map', 'ls', document.uri.fsPath]),
+          call<{ documents: Located[] }>(root, ['--central', 'ls', document.uri.fsPath]),
+          call<{ mappings: LocatedMapping[] }>(root, ['--central', 'map', 'ls', document.uri.fsPath]),
         ]);
         const localLenses = result.documents.flatMap(d => d.projections.flatMap(p => p.locations.filter(l => vscode.Uri.joinPath(vscode.Uri.file(root), l.path).fsPath === document.uri.fsPath && l.start <= document.lineCount).map(l => new vscode.CodeLens(new vscode.Range(l.start - 1, 0, l.start - 1, 0), { command: 'lore.open', title: `Lore: ${d.view.document.title}`, arguments: [d.view.document.id, root] }))));
         const backendLenses = mapped.mappings.flatMap(({ view, projections }) => projections.flatMap(p => p.locations.filter(l => vscode.Uri.joinPath(vscode.Uri.file(root), l.path).fsPath === document.uri.fsPath && l.start <= document.lineCount).map(l => new vscode.CodeLens(new vscode.Range(l.start - 1, 0, l.start - 1, 0), {
-          command: 'lore.openBackend', title: `Lore: ${view.record.mapping.context || view.record.mapping.document.backend}`, arguments: [view.record.mapping.document, root],
+          command: view.record.mapping.document.backend === 'local' ? 'lore.open' : 'lore.openBackend', title: `Lore: ${view.record.mapping.context || view.record.mapping.document.backend}`, arguments: [view.record.mapping.document.backend === 'local' ? view.record.mapping.document.id : view.record.mapping.document, root],
         }))));
         return [...localLenses, ...backendLenses];
       } catch (error) {

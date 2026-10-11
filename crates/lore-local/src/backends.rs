@@ -23,6 +23,7 @@ pub enum BackendConfig {
     },
 }
 
+/// Personal document access settings, independent of a store's shared backend registrations.
 pub struct BackendRegistry {
     directory: PathBuf,
 }
@@ -49,6 +50,11 @@ impl BackendRegistry {
     }
 
     pub fn add(&self, name: &str, config: BackendConfig) -> Result<()> {
+        if name == "local" {
+            return Err(Error::invalid(
+                "The backend name local is reserved for Lore-owned documents",
+            ));
+        }
         if name.is_empty()
             || name.len() > 100
             || !name

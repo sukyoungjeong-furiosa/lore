@@ -67,6 +67,22 @@ impl Setup {
         self.ok(&["map", "create", "team", page, "--glob", "src/scheduler/**"])
     }
 
+    fn publish_mapping(&self, view: &Value) -> Value {
+        let committed = self.ok(&[
+            "commit",
+            view["record"]["mapping"]["id"].as_str().unwrap(),
+            "--mapping",
+            "--if-match",
+            view["revision"].as_str().unwrap(),
+        ]);
+        self.ok(&["push"]);
+        committed
+    }
+
+    fn shared_scope(&self, page: &str) -> Value {
+        self.publish_mapping(&self.scoped(page))
+    }
+
     fn event(&self, session: &str) -> Value {
         json!({
             "hook_event_name": "PostToolUse", "session_id": session, "cwd": self.repo,
@@ -149,13 +165,50 @@ fn hook_documents(output: Output) -> Vec<Value> {
 }
 
 #[test]
+fn unavailable_remote_configuration_does_not_prevent_local_discovery() {
+    let s = Setup::new();
+    let document = s.ok(&["create", "Available local knowledge"]);
+    let id = document["document"]["id"].as_str().unwrap();
+    s.ok(&["attach", id, "src/scheduler/plan.rs:2"]);
+    s.ok(&[
+        "remote",
+        "add",
+        "gone",
+        "--store",
+        "gone-store",
+        "--url",
+        "http://127.0.0.1:1",
+    ]);
+    s.ok(&["remote", "connect", "gone"]);
+    s.ok(&["remote", "remove", "gone"]);
+    let result = s.ok(&["context", "discover", "src/scheduler/plan.rs", "--cached"]);
+    assert_eq!(result["documents"].as_array().unwrap().len(), 1);
+    assert_eq!(result["documents"][0]["document"]["id"], id);
+    assert_eq!(result["shared_available"], false);
+    assert!(
+        result["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|warning| { warning.as_str().unwrap().contains("Lore remote gone") })
+    );
+}
+
+#[test]
 fn automatic_introduction_is_once_per_document_and_explicit_access_remains_available() {
     let s = Setup::new();
-    let mapping = s.scoped(PAGE);
-    s.ok(&["map", "create", "team", PAGE, "src/scheduler/plan.rs:2"]);
+    let mapping = s.shared_scope(PAGE);
+    s.publish_mapping(&s.ok(&["map", "create", "team", PAGE, "src/scheduler/plan.rs:2"]));
     let local = s.ok(&["create", "Local design"]);
     let local_id = local["document"]["id"].as_str().unwrap();
-    s.ok(&["attach", local_id, "src/scheduler/plan.rs:2"]);
+    let attached = s.ok(&["attach", local_id, "src/scheduler/plan.rs:2"]);
+    s.ok(&[
+        "commit",
+        local_id,
+        "--if-match",
+        attached["revision"].as_str().unwrap(),
+    ]);
+    s.ok(&["push"]);
     let first = hook_documents(s.hook(&s.event("session-a")));
     assert_eq!(first.len(), 2);
     let backend = first
@@ -209,7 +262,7 @@ fn automatic_introduction_is_once_per_document_and_explicit_access_remains_avail
 #[test]
 fn explicit_session_identity_supports_hosts_without_a_session_id() {
     let s = Setup::new();
-    s.scoped(PAGE);
+    s.shared_scope(PAGE);
     let mut event = s.event("unused");
     event.as_object_mut().unwrap().remove("session_id");
     assert!(!s.hook(&event).status.success());
@@ -227,7 +280,7 @@ fn explicit_session_identity_supports_hosts_without_a_session_id() {
 #[test]
 fn concurrent_introductions_and_limits_do_not_claim_unsent_documents() {
     let s = Setup::new();
-    s.scoped(PAGE);
+    s.shared_scope(PAGE);
     let children: Vec<_> = (0..4)
         .map(|_| s.start_hook(&s.event("race"), &[]))
         .collect();
@@ -237,7 +290,7 @@ fn concurrent_introductions_and_limits_do_not_claim_unsent_documents() {
         .sum();
     assert_eq!(total, 1);
     for n in 2..=5 {
-        s.scoped(&format!("00000000-0000-4000-8000-{n:012}"));
+        s.shared_scope(&format!("00000000-0000-4000-8000-{n:012}"));
     }
     for expected in [2, 2, 1, 0] {
         assert_eq!(
@@ -262,14 +315,14 @@ fn byte_budget_does_not_mark_omitted_documents_as_introduced() {
     let glob = format!("{directory}/**");
     let path = format!("{directory}/plan.rs");
     for index in 1..=8 {
-        s.ok(&[
+        s.publish_mapping(&s.ok(&[
             "map",
             "create",
             "team",
             &format!("00000000-0000-4000-8000-{index:012}"),
             "--glob",
             &glob,
-        ]);
+        ]));
     }
     let mut introduced = std::collections::BTreeSet::new();
     for _ in 0..8 {
@@ -292,11 +345,11 @@ fn byte_budget_does_not_mark_omitted_documents_as_introduced() {
 #[test]
 fn scope_installation_is_worktree_specific_but_session_deduplication_is_shared() {
     let s = Setup::new();
-    s.scoped(PAGE);
     let peer = s.temp.path().join("peer");
     s.git(&["worktree", "add", "-qb", "peer", peer.to_str().unwrap()]);
     parse(s.command(&peer, &["init"]).output().unwrap());
-    assert!(
+    s.shared_scope(PAGE);
+    assert_eq!(
         parse(
             s.command(&peer, &["context", "discover", "src/scheduler/plan.rs"])
                 .output()
@@ -304,7 +357,9 @@ fn scope_installation_is_worktree_specific_but_session_deduplication_is_shared()
         )["documents"]
             .as_array()
             .unwrap()
-            .is_empty()
+            .len(),
+        1,
+        "Accepted knowledge is discoverable before installation"
     );
     let result = parse(
         s.command(
@@ -347,7 +402,7 @@ fn scope_installation_is_worktree_specific_but_session_deduplication_is_shared()
 #[test]
 fn hook_uses_path_mentions_and_separates_agent_threads_without_parsing_commands() {
     let s = Setup::new();
-    s.scoped(PAGE);
+    s.shared_scope(PAGE);
     let mut event = s.event("paths");
     event["tool_input"] = json!({"file_path": "src/scheduler/a file.rs"});
     assert_eq!(hook_documents(s.hook(&event)).len(), 1);
@@ -377,7 +432,7 @@ fn hook_uses_path_mentions_and_separates_agent_threads_without_parsing_commands(
 #[test]
 fn routing_refreshes_on_archive_and_invalid_globs_do_not_change_workspace_state() {
     let s = Setup::new();
-    let mapping = s.scoped(PAGE);
+    let mapping = s.shared_scope(PAGE);
     assert_eq!(
         s.ok(&["map", "ls", "src/scheduler/plan.rs"])["mappings"]
             .as_array()
@@ -449,9 +504,9 @@ fn session_start_prepares_worktrees_and_shared_discovery_does_not_expose_drafts(
         s.introduce(&peer, "fresh", "8", "src/scheduler/plan.rs")
             .is_empty()
     );
-    s.ok(&["map", "publish", id, "--if-match", revision]);
+    s.publish_mapping(&shared);
     let published_state = s.ok(&["status"]);
-    s.ok(&["map", "publish", id, "--if-match", revision]);
+    s.ok(&["push"]);
     assert_eq!(
         s.ok(&["status"]),
         published_state,
@@ -487,29 +542,7 @@ fn session_start_prepares_worktrees_and_shared_discovery_does_not_expose_drafts(
         1,
         "Local archive does not change shared discovery"
     );
-    let conflict = s
-        .command(
-            &s.repo,
-            &[
-                "map",
-                "publish",
-                id,
-                "--if-match",
-                draft["revision"].as_str().unwrap(),
-            ],
-        )
-        .output()
-        .unwrap();
-    assert_eq!(conflict.status.code(), Some(3));
-    s.ok(&[
-        "map",
-        "publish",
-        id,
-        "--if-match",
-        draft["revision"].as_str().unwrap(),
-        "--if-shared",
-        revision,
-    ]);
+    s.publish_mapping(&draft);
     assert!(
         parse(
             s.command(&peer, &["context", "discover", "src/scheduler/plan.rs"])
@@ -526,13 +559,7 @@ fn session_start_prepares_worktrees_and_shared_discovery_does_not_expose_drafts(
 fn a_worktree_created_mid_session_is_prepared_from_structured_tool_workdir() {
     let s = Setup::new();
     let mapping = s.scoped(PAGE);
-    s.ok(&[
-        "map",
-        "publish",
-        mapping["record"]["mapping"]["id"].as_str().unwrap(),
-        "--if-match",
-        mapping["revision"].as_str().unwrap(),
-    ]);
+    s.publish_mapping(&mapping);
     let peer = s.temp.path().join("mid-session");
     s.git(&["worktree", "add", "-qb", "mid", peer.to_str().unwrap()]);
     let mut event = s.event("worktree-session");

@@ -26,6 +26,7 @@
       if (!current || m.root !== currentRoot || m.id !== current.document.id || $('local-mode').hidden) return;
       if (m.action === 'edit' && !historical && !busy) { draft().editing = true; buttons(); remember(); }
       else if (m.action === 'archive' && !historical && !busy && !draft()?.dirty) send({ type: 'archive', id: current.document.id, revision: current.revision });
+      else if (m.action === 'publish' && !historical && !busy && !draft()?.dirty) { busy = true; buttons(); send({ type: 'publish', id: current.document.id, revision: current.revision }); }
       else if (m.action === 'history' && !busy) send({ type: 'history', id: current.document.id });
       return;
     }
@@ -56,7 +57,7 @@
     if (!historical && !d.dirty) { d.title = current.document.title; d.content = current.document.content; d.directory = current.document.directory; d.revision = current.revision; }
     $('document').hidden = false;
     $('title').textContent = current.document.title;
-    $('status').textContent = `Last modified: ${new Date(current.last_modified_ms).toLocaleString()} · Contributors: ${current.document.authorship.join(', ')} · Local Documents${current.document.archived ? ' · Archived' : ''}${historical ? ' · Historical revision (read only)' : ''}`;
+    $('status').textContent = `Last modified: ${new Date(current.last_modified_ms).toLocaleString()} · Contributors: ${current.document.authorship.join(', ')} · Local Documents${m.working ? ' · Working copy (not published)' : ' · Central'}${current.document.archived ? ' · Archived' : ''}${historical ? ' · Historical revision (read only)' : ''}`;
     if (m.html !== undefined) $('reader').innerHTML = m.html;
     else { const pre = document.createElement('pre'); pre.textContent = current.document.content; $('reader').replaceChildren(pre); }
     $('edit-title').value = d.title; $('body').value = d.content; $('edit-directory').value = d.directory;

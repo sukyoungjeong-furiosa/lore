@@ -8,6 +8,11 @@ use std::{io::Read, path::PathBuf};
 mod backend_commands;
 mod context_commands;
 mod mapping_commands;
+mod remote_commands;
+mod resolver_commands;
+mod server_commands;
+mod store_commands;
+mod sync_commands;
 
 #[derive(Parser)]
 #[command(version, about = "What the code doesn't tell you.")]
@@ -16,6 +21,9 @@ struct Cli {
     repo: PathBuf,
     #[arg(long, global = true)]
     json: bool,
+    /// Read accepted local knowledge while projecting against this code checkout.
+    #[arg(long, global = true)]
+    central: bool,
     #[arg(long, global = true, value_enum, default_value = "unknown")]
     author: Author,
     #[command(subcommand)]
@@ -27,6 +35,12 @@ enum Author {
     Human,
     Agent,
     Unknown,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum DocumentChoice {
+    Local,
+    Shared,
 }
 
 impl From<Author> for Actor {
@@ -41,12 +55,74 @@ impl From<Author> for Actor {
 
 #[derive(Subcommand)]
 enum Operation {
+    /// Submit committed knowledge to the local central branch, or a Lore server.
+    Push {
+        #[arg(hide = true)]
+        id: Option<lore_core::MappingId>,
+        #[arg(long)]
+        proposal: bool,
+        #[arg(long, conflicts_with = "id")]
+        document: Vec<DocumentId>,
+        #[arg(long, conflicts_with = "id")]
+        mapping_id: Vec<lore_core::MappingId>,
+        #[arg(long, conflicts_with_all = ["document","mapping_id","id"])]
+        all: bool,
+        #[arg(long)]
+        remote: Option<String>,
+        #[arg(long, hide = true, conflicts_with = "remote")]
+        local_store: Option<String>,
+        #[arg(long, hide = true)]
+        from_remote: Option<String>,
+        #[arg(long, hide = true, conflicts_with = "from_remote")]
+        from_local_store: Option<String>,
+    },
+    /// Incorporate accepted knowledge without overwriting local changes.
+    Pull {
+        #[arg(long)]
+        remote: Option<String>,
+        #[arg(long, hide = true, conflicts_with = "remote")]
+        local_store: Option<String>,
+        #[arg(long, hide = true, conflicts_with = "path")]
+        id: Option<lore_core::MappingId>,
+        #[arg(long, hide = true)]
+        path: Option<PathBuf>,
+        #[arg(long, hide = true)]
+        backend: Option<String>,
+    },
+    /// Retrieve accepted knowledge without changing the working branch or baselines.
+    Fetch {
+        #[arg(long)]
+        remote: Option<String>,
+        #[arg(long, hide = true, conflicts_with = "remote")]
+        local_store: Option<String>,
+        #[arg(long, hide = true)]
+        id: Option<lore_core::MappingId>,
+    },
+    /// Manage filesystem mapping stores independently of code repositories.
+    Store {
+        #[command(subcommand)]
+        command: store_commands::StoreOperation,
+    },
+    Server {
+        #[command(subcommand)]
+        command: server_commands::ServerOperation,
+    },
+    /// Configure mapping-sharing connections independently of document backends.
+    Remote {
+        #[command(subcommand)]
+        command: remote_commands::RemoteOperation,
+    },
+    /// Configure replaceable model resolvers and user-local model credentials.
+    Resolver {
+        #[command(subcommand)]
+        command: resolver_commands::ResolverOperation,
+    },
     /// Discover related Lore without reading document bodies.
     Context {
         #[command(subcommand)]
         command: context_commands::ContextOperation,
     },
-    /// Configure external knowledge backends and shared connection credentials.
+    /// Configure document backends and shared connection credentials.
     Backend {
         #[command(subcommand)]
         command: backend_commands::BackendOperation,
@@ -58,17 +134,59 @@ enum Operation {
     },
     /// Maintain independent code-to-document mappings.
     Map {
+        #[arg(long, global = true, hide = true)]
+        remote: Option<String>,
+        #[arg(long, global = true, conflicts_with = "remote")]
+        store: Option<lore_core::KnowledgeStoreId>,
+        #[arg(long, global = true, hide = true, conflicts_with_all = ["remote", "store"])]
+        local_store: Option<String>,
         #[command(subcommand)]
         command: mapping_commands::MapOperation,
     },
     /// Initialize knowledge outside this Git checkout.
     Init {
-        #[arg(long)]
+        /// Override the immutable revision cache location; does not select a shared mapping store.
+        #[arg(long = "cache-dir", alias = "store")]
         store: Option<PathBuf>,
         #[arg(long)]
         repository_id: Option<String>,
+        #[arg(long)]
+        local_store: Option<String>,
     },
     Status,
+    /// Record one document or mapping on this workspace's knowledge branch.
+    Commit {
+        id: String,
+        #[arg(long)]
+        mapping: bool,
+        #[arg(long)]
+        if_match: RevisionId,
+    },
+    /// Select a committed document revision without discarding local changes.
+    Checkout {
+        target: String,
+        #[arg(long)]
+        create: bool,
+    },
+    /// Inspect knowledge worktrees without changing code worktrees.
+    Worktree,
+    /// Inspect or accept knowledge change proposals.
+    Proposal {
+        #[arg(long)]
+        remote: Option<String>,
+        #[command(subcommand)]
+        command: ProposalOperation,
+    },
+    /// Resolve document versions explicitly; choosing local does not commit it.
+    ResolveConflict {
+        id: DocumentId,
+        #[arg(long)]
+        if_match: RevisionId,
+        #[arg(long)]
+        if_shared: RevisionId,
+        #[arg(long, value_enum)]
+        take: DocumentChoice,
+    },
     Create {
         title: String,
         #[arg(long, conflicts_with = "stdin")]
@@ -105,6 +223,10 @@ enum Operation {
     },
     Show {
         id: DocumentId,
+        #[arg(long, conflicts_with_all = ["committed", "revision"])]
+        remote: Option<String>,
+        #[arg(long)]
+        committed: bool,
         #[arg(long)]
         revision: Option<RevisionId>,
         #[arg(long, conflicts_with = "json")]
@@ -159,6 +281,19 @@ enum Operation {
     },
 }
 
+#[derive(Subcommand)]
+enum ProposalOperation {
+    List,
+    Show {
+        id: String,
+    },
+    Integrate {
+        id: String,
+        #[arg(long)]
+        if_match: String,
+    },
+}
+
 fn body(file: Option<&PathBuf>, stdin: bool) -> Result<Option<String>> {
     if let Some(file) = file {
         return Ok(Some(std::fs::read_to_string(file)?));
@@ -182,6 +317,14 @@ fn scope(workspace: &Workspace, path: &std::path::Path) -> Result<String> {
 fn execute(cli: &Cli) -> Result<Value> {
     let data_home = home()?;
     match &cli.command {
+        Operation::Server { command } => return server_commands::execute(command),
+        Operation::Store { command } => return store_commands::execute(&data_home, command),
+        Operation::Remote { command } => {
+            return remote_commands::execute(&data_home, &cli.repo, command);
+        }
+        Operation::Resolver { command } => {
+            return resolver_commands::configure(&data_home, command);
+        }
         Operation::Backend { command } => return backend_commands::configure(&data_home, command),
         Operation::Docs { command } => return backend_commands::documents(&data_home, command),
         _ => {}
@@ -189,29 +332,270 @@ fn execute(cli: &Cli) -> Result<Value> {
     if let Operation::Init {
         store,
         repository_id,
+        local_store,
     } = &cli.command
     {
-        let workspace = Workspace::init(
+        let workspace = Workspace::init_with_local_store(
             &data_home,
             &cli.repo,
             store.as_deref(),
             repository_id.clone(),
+            local_store.as_deref(),
         )?;
         return Ok(json!({"state_path":workspace.state_path,"workspace":workspace.state()?}));
     }
     let workspace = Workspace::open(&data_home, &cli.repo)?;
+    let workspace = if cli.central {
+        workspace.with_central_view()
+    } else {
+        workspace
+    };
+    if cli.central
+        && matches!(
+            cli.command,
+            Operation::Commit { .. }
+                | Operation::Create { .. }
+                | Operation::Edit { .. }
+                | Operation::Attach { .. }
+                | Operation::Archive { .. }
+                | Operation::Restore { .. }
+                | Operation::Checkout { .. }
+                | Operation::ResolveConflict { .. }
+        )
+    {
+        return Err(Error::invalid(
+            "Central knowledge is read-only; edit on a working branch and submit a proposal",
+        ));
+    }
+    if cli.central
+        && matches!(&cli.command, Operation::Map { command, .. } if matches!(command,
+        mapping_commands::MapOperation::Create { .. } | mapping_commands::MapOperation::Edit { .. }
+        | mapping_commands::MapOperation::Attach { .. } | mapping_commands::MapOperation::Archive { .. }
+        | mapping_commands::MapOperation::Restore { .. } | mapping_commands::MapOperation::Publish { .. }
+        | mapping_commands::MapOperation::Install { .. } | mapping_commands::MapOperation::ResolveConflict { .. }))
+    {
+        return Err(Error::invalid(
+            "Central knowledge is read-only; edit mappings on a working branch",
+        ));
+    }
+    if let Operation::Map {
+        remote,
+        local_store,
+        store,
+        command,
+    } = &cli.command
+        && (remote.is_some()
+            || local_store.is_some()
+            || (store.is_some()
+                && !matches!(
+                    command,
+                    mapping_commands::MapOperation::Ls { .. }
+                        | mapping_commands::MapOperation::Show { .. }
+                        | mapping_commands::MapOperation::History { .. }
+                        | mapping_commands::MapOperation::Resolve { .. }
+                )))
+    {
+        return Err(sync_commands::retired());
+    }
+    let workspace = if let Operation::Map {
+        store: Some(store), ..
+    } = &cli.command
+    {
+        workspace.with_mapping_store(store.clone())
+    } else {
+        workspace
+    };
     let actor: Actor = cli.author.into();
     match &cli.command {
+        Operation::Push {
+            id,
+            proposal,
+            document,
+            mapping_id,
+            all,
+            remote,
+            local_store,
+            from_remote,
+            from_local_store,
+        } => {
+            if id.is_some()
+                || local_store.is_some()
+                || from_remote.is_some()
+                || from_local_store.is_some()
+            {
+                return Err(sync_commands::retired());
+            }
+            if let Some(remote) = remote {
+                if *proposal {
+                    return Err(Error::invalid("Remote Push already creates a proposal"));
+                }
+                workspace.push_remote_knowledge(&data_home, remote, document, mapping_id, *all)
+            } else {
+                if !document.is_empty() || !mapping_id.is_empty() || *all {
+                    return Err(Error::invalid(
+                        "Local Push submits committed branch changes; object selection is for --remote",
+                    ));
+                }
+                workspace.push_knowledge(*proposal)
+            }
+        }
+        Operation::Pull {
+            remote,
+            local_store,
+            id,
+            path,
+            backend,
+        } => {
+            if local_store.is_some() || id.is_some() || path.is_some() || backend.is_some() {
+                return Err(sync_commands::retired());
+            }
+            if let Some(remote) = remote {
+                workspace.pull_remote_knowledge(&data_home, remote)
+            } else {
+                Ok(serde_json::to_value(workspace.pull_knowledge()?)?)
+            }
+        }
+        Operation::Fetch {
+            remote,
+            local_store,
+            id,
+        } => {
+            if local_store.is_some() || id.is_some() {
+                return Err(sync_commands::retired());
+            }
+            if let Some(remote) = remote {
+                workspace.fetch_remote_knowledge(&data_home, remote)
+            } else {
+                Ok(json!({"knowledge": workspace.fetch_knowledge()?}))
+            }
+        }
         Operation::Context { command } => {
             context_commands::execute(&workspace, &data_home, command)
         }
-        Operation::Backend { .. } | Operation::Docs { .. } => unreachable!(),
-        Operation::Map { command } => {
+        Operation::Backend { .. }
+        | Operation::Docs { .. }
+        | Operation::Resolver { .. }
+        | Operation::Remote { .. } => {
+            unreachable!()
+        }
+        Operation::Server { .. } | Operation::Store { .. } => unreachable!(),
+        Operation::Map {
+            command,
+            remote,
+            store,
+            local_store,
+        } => {
+            if let mapping_commands::MapOperation::ResolveConflict {
+                id,
+                if_match,
+                if_shared,
+                take,
+            } = command
+            {
+                if store.is_some() {
+                    return Err(Error::invalid(
+                        "Conflict resolution requires a store connection, rather than --store",
+                    ));
+                }
+                if remote.is_some() || local_store.is_some() || store.is_some() {
+                    return Err(sync_commands::retired());
+                }
+                return Ok(serde_json::to_value(
+                    workspace.resolve_knowledge_mapping_conflict(
+                        id,
+                        if_match,
+                        if_shared,
+                        match take {
+                            mapping_commands::ConflictChoice::Local => {
+                                lore_local::ConflictResolutionChoice::Local
+                            }
+                            mapping_commands::ConflictChoice::Shared => {
+                                lore_local::ConflictResolutionChoice::Shared
+                            }
+                        },
+                        actor,
+                    )?,
+                )?);
+            }
+            if (remote.is_some() || local_store.is_some() || store.is_some())
+                && matches!(
+                    command,
+                    mapping_commands::MapOperation::Catalog { .. }
+                        | mapping_commands::MapOperation::Publish { .. }
+                        | mapping_commands::MapOperation::Fetch { .. }
+                )
+            {
+                return Err(sync_commands::retired());
+            }
             mapping_commands::execute(&workspace, &data_home, actor, command)
         }
         Operation::Init { .. } => unreachable!(),
-        Operation::Status => {
-            Ok(json!({"state_path":workspace.state_path,"workspace":workspace.state()?}))
+        Operation::Status => Ok(
+            json!({"state_path":workspace.state_path,"workspace":workspace.state()?, "document_store_state_path": workspace.document_store_state_path()?, "knowledge":workspace.knowledge_status()?}),
+        ),
+        Operation::Commit {
+            id,
+            if_match,
+            mapping,
+        } => {
+            if *mapping {
+                Ok(serde_json::to_value(
+                    workspace.commit_mapping_knowledge(&id.parse()?, if_match)?,
+                )?)
+            } else {
+                Ok(serde_json::to_value(
+                    workspace.commit_document(&id.parse()?, if_match)?,
+                )?)
+            }
+        }
+        Operation::Checkout { target, create } => {
+            if let Ok(id) = target.parse::<DocumentId>() {
+                if *create {
+                    return Err(Error::invalid("--create applies to knowledge branches"));
+                }
+                Ok(serde_json::to_value(workspace.checkout_document(&id)?)?)
+            } else {
+                Ok(serde_json::to_value(
+                    workspace.checkout_knowledge_branch(target, *create)?,
+                )?)
+            }
+        }
+        Operation::Worktree => workspace.knowledge_worktree_status(),
+        Operation::Proposal { remote, command } => {
+            if let Some(remote) = remote {
+                return workspace.remote_knowledge_proposal(
+                    &data_home,
+                    remote,
+                    match command {
+                        ProposalOperation::List => None,
+                        ProposalOperation::Show { id } => Some((id, None)),
+                        ProposalOperation::Integrate { id, if_match } => Some((id, Some(if_match))),
+                    },
+                );
+            }
+            match command {
+                ProposalOperation::List => {
+                    Ok(serde_json::json!({"proposals":workspace.knowledge_proposals()?}))
+                }
+                ProposalOperation::Show { id } => workspace.knowledge_proposal(id),
+                ProposalOperation::Integrate { id, if_match } => Ok(serde_json::to_value(
+                    workspace.integrate_knowledge(id, if_match)?,
+                )?),
+            }
+        }
+        Operation::ResolveConflict {
+            id,
+            if_match,
+            if_shared,
+            take,
+        } => {
+            let choice = match take {
+                DocumentChoice::Local => lore_local::ConflictResolutionChoice::Local,
+                DocumentChoice::Shared => lore_local::ConflictResolutionChoice::Shared,
+            };
+            Ok(serde_json::to_value(workspace.resolve_document_conflict(
+                id, if_match, if_shared, choice, actor,
+            )?)?)
         }
         Operation::Create {
             title,
@@ -294,13 +678,23 @@ fn execute(cli: &Cli) -> Result<Value> {
             };
             Ok(json!({
                 "documents": documents,
-                "coverage": "active workspace documents",
+                "coverage": "workspace and committed local documents",
                 "resolver": "exact text with Git rename discovery",
             }))
         }
-        Operation::Show { id, revision, .. } => Ok(serde_json::to_value(
-            workspace.read(id, revision.as_ref())?,
-        )?),
+        Operation::Show {
+            id,
+            revision,
+            remote,
+            committed,
+            ..
+        } => Ok(serde_json::to_value(if let Some(name) = remote {
+            workspace.read_remote_document(&data_home, name, id)?
+        } else if *committed {
+            workspace.read_committed_document(id, revision.as_ref())?
+        } else {
+            workspace.read(id, revision.as_ref())?
+        })?),
         Operation::Edit {
             id,
             if_match,
@@ -438,7 +832,7 @@ fn print_human(value: &Value, command: &Operation) {
     match command {
         Operation::Context { .. } => context_commands::print(value),
         Operation::Docs { command } => backend_commands::print(value, command),
-        Operation::Map { command } => mapping_commands::print(value, command),
+        Operation::Map { command, .. } => mapping_commands::print(value, command),
         Operation::Show { raw, .. } => {
             let d = &value["document"];
             if !raw {
@@ -521,11 +915,23 @@ fn main() {
             } else {
                 print_human(&value, &cli.command);
             }
+            if value["status"] == "conflict" {
+                std::process::exit(3);
+            }
             if value["results"]
                 .as_array()
                 .is_some_and(|r| r.iter().any(|v| v["status"] == "failed"))
             {
                 std::process::exit(1);
+            }
+            if value["integration"] == "conflict"
+                || value["results"].as_array().is_some_and(|results| {
+                    results.iter().any(|result| {
+                        result["status"] == "conflict" || result["status"] == "local_changed"
+                    })
+                })
+            {
+                std::process::exit(3);
             }
         }
         Err(error) => {

@@ -1,40 +1,37 @@
 # Synchronization
 
-Synchronization exchanges Lore-managed mapping revisions between a workspace and a shared source through Fetch, Pull, and Push.
+Lore distinguishes working commits, change proposals, and accepted central knowledge. These contracts apply from an agent workspace to a local central store and from a person's local central store to a Lore remote.
 
-Published mapping revisions are immutable; updates create new revisions. External document changes follow their owning backend's contract. These operations do not synchronize document content.
+## Commit and Submission
 
-## Fetch
+- Commit records selected Lore-owned document or mapping changes on a working branch. It does not publish them to central knowledge.
+- Direct mapping publication is retired; documents and mappings use the same submission and integration path.
+- Push submits an immutable proposal with a fixed baseline and proposed state. Submission and integration are distinct outcomes.
+- Local proposals use the working branch's common ancestor with central history. Remote proposals use the destination state last incorporated by Pull.
+- Local Push may integrate a non-conflicting proposal immediately. Proposal-only submission is available; remote submission does not imply acceptance.
+- Remote submission selects documents or mappings explicitly, or explicitly selects all accepted local knowledge. It does not implicitly publish pending workspace changes or copy external document bodies.
+- Selected mappings require their Lore-owned documents in the destination or in the submission; missing dependencies are reported, not implicitly published.
+- Repeating the same submission has one durable outcome. Reusing its operation identity with different content is rejected.
 
-- Fetch retrieves mapping revisions without changing active mapping revisions, local edits, or synchronization baselines.
-- Fetching a mapping does not implicitly fetch its document. Document retrieval does not advance a mapping baseline.
+## Integration
 
-## Pull
+- Integration conditionally updates the observed central version and publishes the whole proposal or nothing. Independent or identical entity changes can combine; divergent changes to one entity remain conflicts.
+- Final integrated knowledge preserves mappings' Lore-owned document references, including archived documents.
+- Conflicts preserve the proposal, its baseline, and central knowledge. Resolutions are explicit and conditional on the observed states.
+- Integrated revisions are immutable. Repeated integration of an accepted proposal returns its original result even if central knowledge has advanced.
+- `conflict_free` accepts non-conflicting proposals; `fast_forward_only` requires a new proposal's baseline to equal the current central version. Neither policy requires an agent.
+- Stored proposals and integration results remain inspectable and reachable until explicitly removed under a retention policy.
+- Applying results must not discard changes made while an operation was running.
 
-- When a mapping has no local changes, Pull activates the selected shared revision.
-- Local-only changes are preserved. If local and shared states both changed from the baseline, Pull reports a conflict rather than resolving it silently.
-- Successful incorporation advances the baseline; unresolved conflicts do not.
+## Fetch and Pull
 
-## Push
+- Fetch retrieves shared knowledge without changing a working branch, pending edits, or incorporation baselines.
+- Pull incorporates accepted knowledge and advances its source baseline only after successful incorporation. Conflicting local and shared changes are not silently resolved.
+- Remote Pull updates local central knowledge. Working branches incorporate those changes with their own Pull.
+- An interrupted incorporation is recovered before newer source state is applied; successful integration must not be mistaken for an unapplied change because baseline publication was interrupted.
+- Baselines are scoped to the local store, repository, and remote connection. Foreign version tokens or matching object IDs do not establish a common ancestor.
+- External document fetch and editing follow the owning backend's contract independently of knowledge synchronization.
 
-- Push captures and publishes one mapping's recorded workspace state, including its document reference, anchors, and explanatory context. Unrecorded client edits are excluded.
-- Publication requires the shared revision to match the workspace's baseline, or the identity to be unused for a new mapping.
-- Conflicts preserve local changes. Successful publication identifies the final published revision, including any reconciled code references.
-- Document retrieval failure alone does not prevent publication of a mapping that retains its document reference.
+## Code Reconciliation
 
-## Server Reconciliation
-
-- The server attempts to reconcile submitted anchors with the configured canonical ref for their code repository, such as `upstream/master`.
-- Reconciliation uses [code projection](code-projection.md). Confirmed correspondence is recorded against the canonical code revision while preserving the submitted reference.
-- If correspondence cannot be established, the original reference is published with explicit uncertainty.
-- Reconciliation does not modify the referenced document or establish human confirmation of the mapping.
-
-## Scope and Failure
-
-- Pull can select mappings by document reference or [workspace code scope](workspace.md#knowledge-availability). Push targets one mapping. Results are reported per mapping.
-- Applying results must not discard changes made during the operation. Retrying uncertain operations must not duplicate publications or lose local changes.
-- Conflicting versions and their shared baseline remain available for inspection. Humans or agents may propose resolutions; application is explicit and requires the relevant states to remain unchanged since preparation.
-
-## Lore-Owned Documents
-
-Document storage and synchronization are separate backend operations. A Lore document backend preserves revision history and must not silently overwrite concurrent edits. Publishing a mapping does not implicitly publish or synchronize its document.
+An optional worker may propose correspondence to a canonical code revision through [code projection](code-projection.md), preserving the original anchor identity and the actual target revision. This is separate from integration; unresolved correspondence or worker unavailability does not prevent submission or conflict-free integration. Code reconciliation neither rewrites document content nor resolves semantic contradictions between documents.

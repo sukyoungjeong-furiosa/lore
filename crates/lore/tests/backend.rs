@@ -832,82 +832,39 @@ fn cache_first_reads_and_explicit_fetch_preserve_observations_and_mapping_state(
 }
 
 #[test]
-fn remote_mapping_discovery_fetches_metadata_without_installing_or_reading_bodies() {
+fn central_mapping_discovery_does_not_install_revisions_or_read_backend_bodies() {
     let mock = Mock::new();
     mock.fixture();
     let s = Setup::new(&mock);
     let mapping = s.ok(&["map", "create", "team", CHILD, "--glob", "compiler/**"]);
     let id = mapping["record"]["mapping"]["id"].as_str().unwrap();
     s.ok(&[
-        "map",
-        "publish",
+        "commit",
         id,
+        "--mapping",
         "--if-match",
         mapping["revision"].as_str().unwrap(),
     ]);
-    let mut catalog = s.ok(&["map", "fetch"])["catalog"].clone();
-    catalog["mappings"][id]["title"] = json!("Remote Scheduler Design");
-    mock.set("/mapping-index", 200, catalog.clone());
-    s.ok(&[
-        "map",
-        "source",
-        "set",
-        &format!("{}/mapping-index", mock.url),
-        "--token-env",
-        "LORE_TEST_NOTION_TOKEN",
-    ]);
+    s.ok(&["push"]);
     let peer = s.temp.path().join("peer");
     s.git(&["worktree", "add", "-qb", "peer", peer.to_str().unwrap()]);
     parse(s.run_at(&peer, &["init"]));
     let before = parse(s.run_at(&peer, &["status"]));
-    let unavailable = parse(s.run_at(
+    let result = parse(s.run_at(
         &peer,
-        &["context", "discover", "--cached", "compiler/scheduler.py"],
+        &[
+            "--central",
+            "context",
+            "discover",
+            "--cached",
+            "compiler/scheduler.py",
+        ],
     ));
-    assert_eq!(unavailable["shared_available"], false);
-    assert!(!unavailable["warnings"].as_array().unwrap().is_empty());
-    assert!(mock.requests.lock().unwrap().is_empty());
-    let result = parse(s.run_at(&peer, &["context", "discover", "compiler/scheduler.py"]));
-    assert_eq!(result["documents"][0]["title"], "Remote Scheduler Design");
     assert_eq!(result["documents"][0]["mappings"][0], id);
-    assert_eq!(mock.requests.lock().unwrap().len(), 1);
-    parse(s.run_at(
-        &peer,
-        &["context", "discover", "--cached", "compiler/scheduler.py"],
-    ));
-    parse(s.run_at(&peer, &["map", "fetch", "--max-age-seconds", "300"]));
-    assert_eq!(
-        mock.requests.lock().unwrap().len(),
-        1,
-        "Cache freshness is shared across worktrees"
-    );
     assert_eq!(parse(s.run_at(&peer, &["status"])), before);
-    mock.set("/mapping-index", 503, json!({}));
-    assert!(!s.run_at(&peer, &["map", "fetch"]).status.success());
-    assert_eq!(
-        parse(s.run_at(
-            &peer,
-            &["context", "discover", "--cached", "compiler/scheduler.py"]
-        ))["documents"],
-        result["documents"]
-    );
-    catalog["repository"] = json!("different-repository");
-    mock.set("/mapping-index", 200, catalog);
-    assert!(!s.run_at(&peer, &["map", "fetch"]).status.success());
-    assert_eq!(
-        parse(s.run_at(
-            &peer,
-            &["context", "discover", "--cached", "compiler/scheduler.py"]
-        ))["documents"],
-        result["documents"]
-    );
     assert!(
-        mock.requests
-            .lock()
-            .unwrap()
-            .iter()
-            .all(|(_, path, _)| path.ends_with("/mapping-index")),
-        "Discovery never reads Notion bodies or traverses its tree"
+        mock.requests.lock().unwrap().is_empty(),
+        "Discovery does not read Notion bodies or enumerate pages"
     );
 }
 
@@ -1078,22 +1035,17 @@ fn executable_session_hook_refreshes_remote_discovery_in_the_background() {
     let s = Setup::new(&mock);
     let mapping = s.ok(&["map", "create", "team", CHILD, "--glob", "*.py"]);
     s.ok(&[
-        "map",
-        "publish",
+        "commit",
         mapping["record"]["mapping"]["id"].as_str().unwrap(),
+        "--mapping",
         "--if-match",
         mapping["revision"].as_str().unwrap(),
     ]);
-    let observation = s.ok(&["map", "fetch"]);
-    mock.set("/mapping-index", 200, observation["catalog"].clone());
-    s.ok(&[
-        "map",
-        "source",
-        "set",
-        &format!("{}/mapping-index", mock.url),
-        "--token-env",
-        "LORE_TEST_NOTION_TOKEN",
-    ]);
+    s.ok(&["push"]);
+    let repository = s.ok(&["status"])["workspace"]["repository_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
     let peer = s.temp.path().join("agent-worktree");
     s.git(&["worktree", "add", "-qb", "agent", peer.to_str().unwrap()]);
     let invoke = |event: Value| {
@@ -1132,15 +1084,13 @@ fn executable_session_hook_refreshes_remote_discovery_in_the_background() {
         .temp
         .path()
         .join("knowledge/integrations/codex/refresh")
-        .join(lore_core::hash(
-            observation["catalog"]["repository"].as_str().unwrap(),
-        ))
+        .join(lore_core::hash(&repository))
         .join("result.json");
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         if let Ok(bytes) = std::fs::read(&path) {
             let result: Value = serde_json::from_slice(&bytes).unwrap();
-            if result["results"].as_array().unwrap().len() == 2 {
+            if result["results"].as_array().unwrap().len() == 1 {
                 assert!(
                     result["results"]
                         .as_array()

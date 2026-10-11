@@ -14,6 +14,18 @@
         ]
       }
     ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /absolute/path/to/lore/integrations/codex/lore_record.py",
+            "timeout": 5,
+            "statusMessage": "Checking for reusable Lore knowledge"
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "hooks": [

@@ -32,8 +32,31 @@ impl CredentialStore {
 
     /// Reads a token only for the backend API endpoint under which it was saved.
     pub fn get(&self, backend: &str, config: &BackendConfig) -> Result<Option<String>> {
-        let file = self.file(backend);
-        let bytes = match std::fs::read(&file) {
+        self.read(&self.file(backend), &connection_id(config))
+    }
+
+    /// Reads a service credential only for its recorded API endpoint.
+    pub fn get_connection(
+        &self,
+        namespace: &str,
+        name: &str,
+        endpoint: &str,
+    ) -> Result<Option<String>> {
+        self.read(
+            &self.connection_file(namespace, name),
+            &hash(format!("{}:{namespace}:{endpoint}", namespace.len())),
+        )
+    }
+
+    fn connection_file(&self, namespace: &str, name: &str) -> PathBuf {
+        self.directory.join(format!(
+            "{}.json",
+            hash(format!("connection:{}:{namespace}:{name}", namespace.len()))
+        ))
+    }
+
+    fn read(&self, file: &Path, connection: &str) -> Result<Option<String>> {
+        let bytes = match std::fs::read(file) {
             Ok(bytes) => bytes,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(error.into()),
@@ -41,7 +64,7 @@ impl CredentialStore {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            if std::fs::metadata(&file)?.permissions().mode() & 0o077 != 0 {
+            if std::fs::metadata(file)?.permissions().mode() & 0o077 != 0 {
                 return Err(Error::new(
                     ErrorKind::PermissionDenied,
                     "Lore credential files must be accessible only to their owner",
@@ -50,10 +73,10 @@ impl CredentialStore {
         }
         let credential: Credential = serde_json::from_slice(&bytes)
             .map_err(|_| Error::new(ErrorKind::Corrupt, "Invalid Lore credential file"))?;
-        if credential.connection != connection_id(config) {
+        if credential.connection != connection {
             return Err(Error::new(
                 ErrorKind::PermissionDenied,
-                "Stored credential belongs to a different backend API endpoint; set it again",
+                "Stored credential belongs to a different API endpoint; set it again",
             ));
         }
         Ok(Some(credential.token))
@@ -61,6 +84,24 @@ impl CredentialStore {
 
     /// Saves a connection token outside repository, cache, and workspace state.
     pub fn set(&self, backend: &str, config: &BackendConfig, token: &str) -> Result<()> {
+        self.write(&self.file(backend), connection_id(config), token)
+    }
+
+    pub fn set_connection(
+        &self,
+        namespace: &str,
+        name: &str,
+        endpoint: &str,
+        token: &str,
+    ) -> Result<()> {
+        self.write(
+            &self.connection_file(namespace, name),
+            hash(format!("{}:{namespace}:{endpoint}", namespace.len())),
+            token,
+        )
+    }
+
+    fn write(&self, file: &Path, connection: String, token: &str) -> Result<()> {
         let token = token.trim();
         if token.is_empty() || token.len() > 16 * 1024 || token.chars().any(char::is_control) {
             return Err(Error::invalid(
@@ -74,14 +115,22 @@ impl CredentialStore {
             std::fs::set_permissions(&self.directory, std::fs::Permissions::from_mode(0o700))?;
         }
         let credential = Credential {
-            connection: connection_id(config),
+            connection,
             token: token.into(),
         };
-        atomic_write(&self.file(backend), &serde_json::to_vec(&credential)?)
+        atomic_write(file, &serde_json::to_vec(&credential)?)
     }
 
     pub fn remove(&self, backend: &str) -> Result<()> {
-        match std::fs::remove_file(self.file(backend)) {
+        self.remove_file(&self.file(backend))
+    }
+
+    pub fn remove_connection(&self, namespace: &str, name: &str) -> Result<()> {
+        self.remove_file(&self.connection_file(namespace, name))
+    }
+
+    fn remove_file(&self, file: &Path) -> Result<()> {
+        match std::fs::remove_file(file) {
             Ok(()) => Ok(()),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(error) => Err(error.into()),

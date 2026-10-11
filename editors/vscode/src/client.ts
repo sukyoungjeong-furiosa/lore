@@ -14,7 +14,7 @@ export interface Retrieved<T> { cached: boolean; fetched_at_ms: number; value: T
 export interface DocumentListing { documents: BackendDocument[]; warnings: string[] }
 export interface DocumentContent { document: BackendDocument; content: string; content_format: string; partial: boolean; warnings: string[] }
 export interface MappingView { revision: string; record: { actor: string; at_ms: number; mapping: { id: string; document: DocumentReference; context: string; archived: boolean; anchors: Anchor[]; scopes?: { repository: string; glob: string }[] } } }
-export interface LocatedMapping { view: MappingView; projections: Projection[] }
+export interface LocatedMapping { store?: string | null; view: MappingView; projections: Projection[] }
 export interface BackendConfiguration { kind: string; display_name?: string; roots: string[]; discovery_pages: string[]; token_env: string; api_url: string }
 let secretStorage: vscode.SecretStorage | undefined;
 export function configureSecrets(storage: vscode.SecretStorage): void { secretStorage = storage; }

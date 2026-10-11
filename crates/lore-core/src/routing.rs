@@ -1,4 +1,7 @@
-use crate::{AnchorSummary, DocumentId, DocumentReference, MappingId, PathScope, Result};
+use crate::{
+    AnchorSummary, DocumentId, DocumentReference, KnowledgeStoreId, MappingId, PathScope, Result,
+    SharedMappingKey,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -9,8 +12,22 @@ pub enum LoreDocument {
     Local { id: DocumentId },
 }
 
+impl LoreDocument {
+    pub fn from_reference(reference: DocumentReference) -> Result<Self> {
+        if reference.backend == "local" {
+            Ok(Self::Local {
+                id: reference.id.parse()?,
+            })
+        } else {
+            Ok(Self::Backend { reference })
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RoutingDocument {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub store: Option<KnowledgeStoreId>,
     #[serde(default)]
     pub mapping: Option<MappingId>,
     pub document: LoreDocument,
@@ -41,6 +58,8 @@ pub struct RelatedLore {
     pub title: Option<String>,
     pub matches: Vec<RoutingMatch>,
     pub mappings: Vec<MappingId>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shared_mappings: Vec<SharedMappingKey>,
 }
 
 /// Discovers recorded relationships without reading code or establishing current correspondence.
@@ -92,11 +111,24 @@ pub fn discover_lore(
                 title: document.title.clone(),
                 matches: vec![],
                 mappings: vec![],
+                shared_mappings: vec![],
             });
+        if related.title.is_none() {
+            related.title = document.title.clone();
+        }
         if let Some(id) = &document.mapping
             && !related.mappings.contains(id)
         {
             related.mappings.push(id.clone());
+        }
+        if let (Some(store), Some(mapping)) = (&document.store, &document.mapping) {
+            let key = SharedMappingKey {
+                store: store.clone(),
+                mapping: mapping.clone(),
+            };
+            if !related.shared_mappings.contains(&key) {
+                related.shared_mappings.push(key);
+            }
         }
         for location in matches {
             if !related.matches.contains(&location) {

@@ -5,7 +5,7 @@ import { DocumentReference, View } from './client';
 export interface SelectedDocument {
   root: string;
   title: string;
-  source: { kind: 'backend'; reference: DocumentReference } | { kind: 'local'; id: string; revision?: string };
+  source: { kind: 'backend'; reference: DocumentReference } | { kind: 'local'; id: string; revision?: string; working?: boolean };
 }
 
 export class DocumentSurface implements vscode.WebviewViewProvider, vscode.Disposable {
@@ -83,16 +83,17 @@ export class DocumentSurface implements vscode.WebviewViewProvider, vscode.Dispo
       if (message.type === 'backendDocument') this.selectDocument({ root: message.root, title: message.title as string, source: { kind: 'backend', reference: message.reference as DocumentReference } });
       else {
         const view = message.view as View;
-        this.selectDocument({ root: message.root, title: view.document.title, source: { kind: 'local', id: view.document.id, revision: message.historical as string | undefined } });
+        this.selectDocument({ root: message.root, title: view.document.title, source: { kind: 'local', id: view.document.id, revision: message.historical as string | undefined, working: message.working === true } });
       }
     }
     if (document) {
+      void vscode.commands.executeCommand('setContext', 'lore.readerWorking', message.working === true);
       void vscode.commands.executeCommand('setContext', 'lore.readerIsHistorical', !!message.historical);
       void vscode.commands.executeCommand('setContext', 'lore.readerArchived', message.type === 'document' && (message.view as View).document.archived);
     }
     if (this.view) void this.view.webview.postMessage(message);
   }
-  async invokeLocalAction(action: 'edit' | 'archive' | 'history'): Promise<void> {
+  async invokeLocalAction(action: 'edit' | 'archive' | 'history' | 'publish'): Promise<void> {
     const selected = this.selected;
     if (selected?.source.kind !== 'local') return;
     await this.view?.webview.postMessage({ type: 'localAction', action, root: selected.root, id: selected.source.id });
@@ -108,7 +109,7 @@ export class DocumentSurface implements vscode.WebviewViewProvider, vscode.Dispo
   private selectDocument(document?: SelectedDocument): void {
     this.selected = document;
     void vscode.commands.executeCommand('setContext', 'lore.readerIsLocalDocument', document?.source.kind === 'local');
-    for (const name of ['readerEditing', 'readerDirty', 'readerBusy', 'readerIsHistorical', 'readerArchived']) void vscode.commands.executeCommand('setContext', `lore.${name}`, false);
+    for (const name of ['readerEditing', 'readerDirty', 'readerBusy', 'readerIsHistorical', 'readerArchived', 'readerWorking']) void vscode.commands.executeCommand('setContext', `lore.${name}`, false);
     void vscode.commands.executeCommand('setContext', 'lore.readerHasDocument', !!document);
     this.documentEvent.fire(document);
   }

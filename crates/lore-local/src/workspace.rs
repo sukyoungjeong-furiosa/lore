@@ -7,13 +7,13 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SharedBaseline {
     pub source: String,
     pub revision: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ActiveDocument {
     pub revision: RevisionId,
     pub shared_baseline: Option<SharedBaseline>,
@@ -21,26 +21,42 @@ pub struct ActiveDocument {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WorkspaceState {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub knowledge_worktree: Option<crate::KnowledgeWorktree>,
     pub schema_version: u32,
     pub checkout: PathBuf,
     pub repository_id: String,
+    /// Immutable revision cache location, independent of the selected mapping stores.
     pub store: PathBuf,
     pub documents: BTreeMap<DocumentId, ActiveDocument>,
     #[serde(default)]
     pub mappings: BTreeMap<lore_core::MappingId, ActiveDocument>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub store_mappings:
+        BTreeMap<lore_core::KnowledgeStoreId, BTreeMap<lore_core::MappingId, ActiveDocument>>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub connected_remotes: BTreeMap<lore_core::KnowledgeStoreId, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_store: Option<crate::LocalStoreConnection>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub connected_local_stores: BTreeMap<lore_core::KnowledgeStoreId, PathBuf>,
 }
 
 #[derive(Serialize, Deserialize)]
 struct CheckoutDefaults {
     repository_id: String,
     store: PathBuf,
+    #[serde(default)]
+    local_store: Option<crate::LocalStoreConnection>,
 }
 
 pub struct Workspace {
+    pub central_view: bool,
     pub state_path: PathBuf,
     pub code: GitRepository,
     pub repository: Box<dyn KnowledgeRepository>,
     pub mapping_repository: Box<dyn lore_core::MappingRepository>,
+    pub mapping_store: Option<lore_core::KnowledgeStoreId>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -80,6 +96,16 @@ impl Workspace {
         checkout: &Path,
         store: Option<&Path>,
         identity: Option<String>,
+    ) -> Result<Self> {
+        Self::init_with_local_store(home, checkout, store, identity, None)
+    }
+
+    pub fn init_with_local_store(
+        home: &Path,
+        checkout: &Path,
+        store: Option<&Path>,
+        identity: Option<String>,
+        local_store_name: Option<&str>,
     ) -> Result<Self> {
         let mut code = GitRepository::discover(checkout, identity.clone())?;
         let home = absolute(home)?;
@@ -143,6 +169,34 @@ impl Workspace {
                 "Lore data must be stored outside the code checkout and Git directory",
             ));
         }
+        let registry = crate::LocalStoreRegistry::new(&home);
+        let local_store = if let Some(name) = local_store_name {
+            registry.get(name)?
+        } else if let Some(connection) = existing
+            .as_ref()
+            .and_then(|state| state.local_store.clone())
+        {
+            connection
+        } else if let Some(connection) = defaults
+            .as_ref()
+            .and_then(|defaults| defaults.local_store.clone())
+        {
+            connection
+        } else {
+            registry.ensure_personal()?
+        };
+        let local_store =
+            crate::LocalStoreConnection::open(&local_store.directory).and_then(|observed| {
+                if observed.store != local_store.store {
+                    Err(Error::new(
+                        ErrorKind::Conflict,
+                        "Local store identity changed; select a store explicitly",
+                    ))
+                } else {
+                    Ok(observed)
+                }
+            })?;
+        local_store.register(std::slice::from_ref(&code.repository_id), &[])?;
         let state_path = Self::state_path(&home, &code.root);
         std::fs::create_dir_all(state_path.parent().unwrap())?;
         let lock = std::fs::OpenOptions::new()
@@ -163,20 +217,37 @@ impl Workspace {
         } else {
             let state = WorkspaceState {
                 schema_version: 1,
+                knowledge_worktree: None,
                 checkout: code.root.clone(),
                 repository_id: code.repository_id.clone(),
                 store: directory,
                 documents: BTreeMap::new(),
                 mappings: BTreeMap::new(),
+                store_mappings: BTreeMap::new(),
+                connected_remotes: BTreeMap::new(),
+                local_store: None,
+                connected_local_stores: BTreeMap::new(),
             };
             atomic_write(&state_path, &serde_json::to_vec_pretty(&state)?)?;
         }
-        let state: WorkspaceState = serde_json::from_slice(&std::fs::read(&state_path)?)?;
+        let mut state: WorkspaceState = serde_json::from_slice(&std::fs::read(&state_path)?)?;
+        if state.local_store.as_ref() != Some(&local_store)
+            || state.connected_local_stores.get(&local_store.store) != Some(&local_store.directory)
+        {
+            state
+                .connected_local_stores
+                .insert(local_store.store.clone(), local_store.directory.clone());
+            state.local_store = Some(local_store);
+            atomic_write(&state_path, &serde_json::to_vec_pretty(&state)?)?;
+        }
         let settings = CheckoutDefaults {
             repository_id: state.repository_id.clone(),
             store: state.store.clone(),
+            local_store: state.local_store.clone(),
         };
+        drop(lock);
         let workspace = Self::from_state(state_path, code, state)?;
+        workspace.ensure_knowledge_worktree()?;
         if defaults.is_none() {
             atomic_write(&defaults_path, &serde_json::to_vec(&settings)?)?;
         }
@@ -217,7 +288,9 @@ impl Workspace {
         code.repository_id = state.repository_id;
         Ok(Self {
             state_path,
+            central_view: false,
             code,
+            mapping_store: None,
             mapping_repository: Box::new(crate::FileMappingRepository {
                 directory: state.store.clone(),
             }),
@@ -242,14 +315,11 @@ impl Workspace {
 
     pub fn list(&self, include_archived: bool) -> Result<Vec<DocumentView>> {
         let state = self.state()?;
-        let mut found = vec![];
-        for (id, active) in state.documents {
-            let revision = self.repository.load(&id, &active.revision)?;
-            if !include_archived && revision.document.archived {
-                continue;
-            }
-            found.push(DocumentView::new(active.revision, revision));
-        }
+        let mut found: Vec<_> = self
+            .available_documents(&state)?
+            .into_iter()
+            .filter(|view| include_archived || !view.document.archived)
+            .collect();
         found.sort_by(|a, b| {
             a.document
                 .title
@@ -262,12 +332,12 @@ impl Workspace {
 
     pub fn read(&self, id: &DocumentId, revision: Option<&RevisionId>) -> Result<DocumentView> {
         let state = self.state()?;
-        let active = state.documents.get(id).ok_or_else(|| {
-            Error::new(
-                ErrorKind::NotFound,
-                "Document is not active in this workspace",
-            )
-        })?;
+        if self.central_view {
+            return self.read_committed_document(id, revision);
+        }
+        let Some(active) = state.documents.get(id) else {
+            return self.read_committed_document(id, revision);
+        };
         let selected = revision.unwrap_or(&active.revision);
         let revision = self.repository.load(id, selected)?;
         Ok(DocumentView::new(selected.clone(), revision))
@@ -310,6 +380,7 @@ impl Workspace {
     ) -> Result<DocumentView> {
         let _lock = self.lock()?;
         let mut state = self.state()?;
+        self.prepare_document_edit(&mut state, id, expected)?;
         let active = state.documents.get_mut(id).ok_or_else(|| {
             Error::new(
                 ErrorKind::NotFound,

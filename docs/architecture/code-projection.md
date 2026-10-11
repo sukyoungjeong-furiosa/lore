@@ -1,7 +1,7 @@
 # Code Projection
 
 Code projection describes correspondence between a recorded anchor and a target
-code state, independently of the document backend. Server reconciliation is defined in [Synchronization](synchronization.md#server-reconciliation).
+code state, independently of the document backend. Canonical reconciliation is defined in [Synchronization](synchronization.md#code-reconciliation).
 
 ## Reference
 
@@ -10,7 +10,7 @@ code state, independently of the document backend. Server reconciliation is defi
 
 ## Correspondence
 
-- A result can identify one or more corresponding locations, competing alternatives, or no established correspondence.
+- A result distinguishes established correspondence, unconfirmed candidates, and no established correspondence. A correspondence can span multiple locations.
 - Multiple locations that jointly correspond to an anchor are distinct from alternatives whose correspondence is uncertain.
 - No established correspondence is a normal outcome; it does not prove that the code was deleted. Correspondence does not establish the validity of the document's explanation.
 
@@ -22,7 +22,7 @@ code state, independently of the document backend. Server reconciliation is defi
 ## Reuse
 
 - Results may be computed on demand and reused across code changes.
-- Reused results retain their code context and uncertainty. Reuse alone does not establish applicability to a different code state.
+- Reused results retain their anchor, target code context, and uncertainty. A matching branch or commit alone does not establish applicability to changed working files.
 
 ## Resolvers
 
@@ -30,3 +30,5 @@ code state, independently of the document backend. Server reconciliation is defi
 - Results report corresponding locations and uncertainty, with explanations when available.
 - Resolver failures must not be reported as established absence of corresponding code.
 - Agent choice, reasoning strategy, and prompts are not prescribed.
+- Model-proposed correspondence remains distinguishable from established correspondence. Valid paths and line ranges alone do not establish a semantic relationship.
+- Results based on captured code retain that context. Changes during resolution must not cause the result to be presented against a different code state.
