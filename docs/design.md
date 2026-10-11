@@ -154,7 +154,7 @@ Notion 페이지는 연결하면 읽을 수 있고, 하위 문서의 목록 발�
 
 ## Mapping, Anchor, Path Scope
 
-Mapping은 안정적인 ID, 문서 참조, 한 코드 저장소의 Anchor 또는 경로 범위, 선택적인 설명을 갖는 관계입니다. 문서는 Mapping이 없어도 존재할 수 있고, 같은 문서가 여러 저장소에 연결되면 저장소별 Mapping을 둡니다. Mapping을 만들거나 수정해도 원본 문서 본문을 바꾸지는 않습니다. Lore-owned 문서에는 Anchor를 직접 붙일 수도 있습니다.
+Mapping은 안정적인 ID, 문서 참조, 한 코드 저장소의 Anchor 또는 경로 범위, 선택적인 설명을 갖는 관계입니다. 문서는 Mapping이 없어도 존재할 수 있고, 같은 문서가 여러 저장소에 연결되면 저장소별 Mapping을 둡니다. Mapping을 만들거나 수정해도 원본 문서 본문을 바꾸지는 않습니다. Lore-owned 문서도 `map create local <document-id> <location>`으로 같은 관계 모델을 사용합니다. Mapping만 변경·커밋해도 문서 revision은 바뀌지 않습니다. 기존 문서에 직접 기록된 Anchor도 읽기와 Projection에서 유지합니다.
 
 ```bash
 lore --json --author agent map create notion <page-id> \
@@ -493,4 +493,4 @@ Google은 Code Wiki를 코드베이스를 분석해 변경에 맞춰 문서를 �
 
 핵심 행동 계약은 [Architecture](architecture/overview.md), [Knowledge Model](architecture/knowledge-model.md), [Workspace](architecture/workspace.md), [Synchronization](architecture/synchronization.md), [Code Projection](architecture/code-projection.md)에 남깁니다. 사용자 경험의 의도는 [Experience](experience.md)를 참고할 수 있습니다.
 
-기존 매핑 전용 동기화 명령은 호환성을 위해 남아 있습니다. 새 지식 공유는 이 문서의 commit → proposal → integration 흐름을 기준으로 사용합니다. 실제 모델의 대응 품질과 운영 환경의 부하·배포 검증은 기능 계약이나 모의 API 테스트만으로 확인할 수 없으므로 별도의 검증이 필요합니다.
+매핑 전용 직접 게시·동기화 경로는 폐기하고 commit → proposal → integration으로 공유합니다. 이전 명령은 새 절차를 안내하며 변경을 적용하지 않습니다. 로컬에 이미 게시된 매핑은 초기화 시 중앙 이력으로 가져오며 미게시 변경은 작업 상태에 남습니다. 실제 모델의 대응 품질과 운영 환경의 부하·배포 검증은 기능 계약이나 모의 API 테스트만으로 확인할 수 없으므로 별도의 검증이 필요합니다.

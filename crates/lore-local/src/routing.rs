@@ -1,10 +1,7 @@
-use crate::{
-    BackendRegistry, CatalogStore, HttpMappingRemote, LocalMappingClient, LocalStoreConnection,
-    RemoteCatalogCache, RemoteRegistry, Workspace, atomic_write,
-};
+use crate::{BackendRegistry, RemoteRegistry, Workspace, atomic_write};
 use lore_core::{
-    AnchorSummary, ErrorKind, LoreDocument, MappingStoreClient, RelatedLore, Result,
-    RoutingDocument, discover_lore, hash,
+    AnchorSummary, ErrorKind, KnowledgeSnapshot, KnowledgeStoreId, LoreDocument, RelatedLore,
+    Result, RoutingDocument, discover_lore, hash,
 };
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeSet, path::Path};
@@ -39,7 +36,7 @@ impl Workspace {
         match std::fs::read(&path) {
             Ok(bytes) => {
                 let index: RoutingIndex = serde_json::from_slice(&bytes)?;
-                if index.schema_version == 2 && index.fingerprint == fingerprint {
+                if index.schema_version == 3 && index.fingerprint == fingerprint {
                     return Ok(index.documents);
                 }
             }
@@ -53,9 +50,7 @@ impl Workspace {
                 documents.push(RoutingDocument {
                     store: item.store,
                     mapping: Some(mapping.id.clone()),
-                    document: LoreDocument::Backend {
-                        reference: mapping.document,
-                    },
+                    document: LoreDocument::from_reference(mapping.document)?,
                     title: None,
                     scopes: mapping.scopes,
                     anchors: mapping
@@ -98,7 +93,7 @@ impl Workspace {
         atomic_write(
             &path,
             &serde_json::to_vec(&RoutingIndex {
-                schema_version: 2,
+                schema_version: 3,
                 fingerprint,
                 documents: documents.clone(),
             })?,
@@ -114,53 +109,28 @@ impl Workspace {
         refresh: bool,
         excluded: &BTreeSet<LoreDocument>,
     ) -> Result<DiscoveryResult> {
-        let store = CatalogStore::new(home, &self.code.repository_id);
-        let shared = if refresh {
-            store.fetch(None)
-        } else {
-            store.read(cached)
-        };
         let mut warnings = vec![];
-        let mut shared_fetched_at_ms = None;
-        let mut shared_source = None;
-        let mut documents: Vec<_> = self
-            .routing_documents()?
-            .into_iter()
-            .filter(|entry| !excluded.contains(&entry.document))
-            .collect();
-        let state = self.state()?;
-        match shared {
-            Ok(observation) => {
-                shared_fetched_at_ms = Some(observation.fetched_at_ms);
-                shared_source = Some(observation.source);
-                for (id, entry) in observation.catalog.mappings {
-                    let mapping = entry.view.record.mapping;
-                    let document = LoreDocument::Backend {
-                        reference: mapping.document,
-                    };
-                    // Local activation overrides the shared relationship, including local archive.
-                    if !mapping.archived
-                        && !state.mappings.contains_key(&id)
-                        && !excluded.contains(&document)
-                    {
-                        documents.push(RoutingDocument {
-                            store: None,
-                            mapping: Some(id),
-                            document,
-                            title: entry.title,
-                            scopes: mapping.scopes,
-                            anchors: mapping.anchors,
-                        });
-                    }
-                }
-            }
-            Err(error) if cached && error.kind == ErrorKind::NotCached => {
-                warnings.push(error.message)
-            }
-            Err(error) => return Err(error),
+        let mut documents = self.routing_documents()?;
+        if !self.central_view {
+            let central = routing_snapshot(self.fetch_knowledge()?.snapshot, None)?;
+            let working_mappings: BTreeSet<_> = self
+                .list_scoped_mappings(true)?
+                .into_iter()
+                .map(|item| item.view.record.mapping.id)
+                .collect();
+            let working_documents: BTreeSet<_> = self
+                .list(true)?
+                .into_iter()
+                .map(|d| LoreDocument::Local { id: d.document.id })
+                .collect();
+            documents.extend(central.into_iter().filter(|entry| match &entry.mapping {
+                Some(id) => !working_mappings.contains(id),
+                None => !working_documents.contains(&entry.document),
+            }));
         }
+        let state = self.state()?;
         for (store, name) in &state.connected_remotes {
-            let observation = (|| {
+            let fetched = (|| {
                 let connection = RemoteRegistry::new(home).get(name)?;
                 if connection.store != *store {
                     return Err(lore_core::Error::new(
@@ -168,159 +138,38 @@ impl Workspace {
                         "Configured remote now selects a different store; reconnect explicitly",
                     ));
                 }
-                let cache = RemoteCatalogCache::for_remote(home, name, &connection)?;
-                if !refresh {
-                    match cache.read(store, &self.code.repository_id) {
-                        Ok(observation) => return Ok(observation),
-                        Err(error) if error.kind == ErrorKind::NotCached && !cached => {}
-                        Err(error) => return Err(error),
-                    }
+                if refresh || (!cached && self.cached_remote_knowledge(home, name)?.is_none()) {
+                    self.fetch_remote_knowledge(home, name)?;
                 }
-                cache.fetch(
-                    &HttpMappingRemote::new(home, name, connection)?,
-                    &self.code.repository_id,
-                )
+                let version = self.cached_remote_knowledge(home, name)?.ok_or_else(|| {
+                    lore_core::Error::new(
+                        ErrorKind::NotCached,
+                        "Run lore fetch --remote to retrieve knowledge",
+                    )
+                })?;
+                version.snapshot.validate(&self.code.repository_id)?;
+                version.snapshot.validate_document_references()?;
+                routing_snapshot(version.snapshot, Some(store.clone()))
             })();
-            match observation {
-                Ok(observation) => {
-                    let mut shared = vec![];
-                    for (id, entry) in observation.catalog.catalog.mappings {
-                        let mapping = entry.view.record.mapping;
-                        let document = LoreDocument::Backend {
-                            reference: mapping.document,
-                        };
-                        if !mapping.archived
-                            && !state
-                                .store_mappings
-                                .get(store)
-                                .is_some_and(|mappings| mappings.contains_key(&id))
-                            && !excluded.contains(&document)
-                        {
-                            shared.push(RoutingDocument {
-                                store: Some(store.clone()),
-                                mapping: Some(id),
-                                document,
-                                title: entry.title,
-                                scopes: mapping.scopes,
-                                anchors: mapping.anchors,
-                            });
-                        }
-                    }
-                    documents.extend(shared);
-                }
+            match fetched {
+                Ok(shared) => documents.extend(shared),
                 Err(error) => warnings.push(format!("Lore remote {name}: {}", error.message)),
             }
         }
-        for (store, directory) in &state.connected_local_stores {
-            let catalog = (|| {
-                let client = LocalMappingClient::new(LocalStoreConnection {
-                    store: store.clone(),
-                    directory: directory.clone(),
-                })?;
-                client.catalog(&self.code.repository_id)
-            })();
-            match catalog {
-                Ok(catalog) => {
-                    for (id, entry) in catalog.catalog.mappings {
-                        let mapping = entry.view.record.mapping;
-                        let document = LoreDocument::Backend {
-                            reference: mapping.document,
-                        };
-                        if !mapping.archived
-                            && !state
-                                .store_mappings
-                                .get(store)
-                                .is_some_and(|mappings| mappings.contains_key(&id))
-                            && !excluded.contains(&document)
-                        {
-                            documents.push(RoutingDocument {
-                                store: Some(store.clone()),
-                                mapping: Some(id),
-                                document,
-                                title: entry.title,
-                                scopes: mapping.scopes,
-                                anchors: mapping.anchors,
-                            });
-                        }
-                    }
-                }
-                Err(error) => warnings.push(format!("Local store {store}: {}", error.message)),
-            }
-        }
-        for (source, name) in &state.connected_remotes {
-            let cached_knowledge = (|| {
-                let connection = RemoteRegistry::new(home).get(name)?;
-                if connection.store != *source {
-                    return Err(lore_core::Error::new(
-                        ErrorKind::Conflict,
-                        "Configured remote now selects a different store; reconnect explicitly",
-                    ));
-                }
-                self.cached_remote_knowledge(home, name)
-            })();
-            let version = match cached_knowledge {
-                Ok(version) => version,
-                Err(error) => {
-                    let warning = format!("Lore remote {name}: {}", error.message);
-                    if !warnings.contains(&warning) {
-                        warnings.push(warning);
-                    }
-                    continue;
-                }
-            };
-            if let Some(version) = version {
-                for record in version.snapshot.documents.into_values() {
-                    let document = LoreDocument::Local {
-                        id: record.document.id,
-                    };
-                    if !record.document.archived && !excluded.contains(&document) {
-                        documents.push(RoutingDocument {
-                            store: Some(source.clone()),
-                            mapping: None,
-                            document,
-                            title: Some(record.document.title),
-                            scopes: vec![],
-                            anchors: record
-                                .document
-                                .anchors
-                                .into_iter()
-                                .map(|a| AnchorSummary {
-                                    id: a.id,
-                                    path: a.path,
-                                    start: a.start,
-                                    end: a.end,
-                                    context: a.context,
-                                })
-                                .collect(),
-                        });
-                    }
-                }
-                for record in version.snapshot.mappings.into_values() {
-                    let mapping = record.mapping;
-                    let document = LoreDocument::Backend {
-                        reference: mapping.document,
-                    };
-                    if !mapping.archived && !excluded.contains(&document) {
-                        documents.push(RoutingDocument {
-                            store: Some(source.clone()),
-                            mapping: Some(mapping.id),
-                            document,
-                            title: None,
-                            scopes: mapping.scopes,
-                            anchors: mapping
-                                .anchors
-                                .into_iter()
-                                .map(|a| AnchorSummary {
-                                    id: a.id,
-                                    path: a.path,
-                                    start: a.start,
-                                    end: a.end,
-                                    context: a.context,
-                                })
-                                .collect(),
-                        });
-                    }
-                }
+        documents.retain(|entry| !excluded.contains(&entry.document));
+        let local_views = self.list(true)?;
+        let archived: BTreeSet<_> = local_views
+            .iter()
+            .filter(|d| d.document.archived)
+            .map(|d| d.document.id.clone())
+            .collect();
+        documents.retain(|entry| !matches!(&entry.document, LoreDocument::Local { id } if entry.store.is_none() && archived.contains(id)));
+        for entry in &mut documents {
+            if let LoreDocument::Local { id } = &entry.document
+                && entry.title.is_none()
+                && let Some(view) = local_views.iter().find(|view| view.document.id == *id)
+            {
+                entry.title = Some(view.document.title.clone());
             }
         }
         let mut related = discover_lore(&documents, &self.code.repository_id, paths)?;
@@ -338,8 +187,7 @@ impl Workspace {
         }
         Ok(DiscoveryResult {
             documents: related,
-            shared_source,
-            shared_fetched_at_ms,
+
             shared_available: warnings.is_empty(),
             warnings,
         })
@@ -349,8 +197,71 @@ impl Workspace {
 #[derive(Serialize)]
 pub struct DiscoveryResult {
     pub documents: Vec<RelatedLore>,
-    pub shared_source: Option<String>,
-    pub shared_fetched_at_ms: Option<u64>,
     pub shared_available: bool,
     pub warnings: Vec<String>,
+}
+
+fn routing_snapshot(
+    snapshot: KnowledgeSnapshot,
+    store: Option<KnowledgeStoreId>,
+) -> Result<Vec<RoutingDocument>> {
+    let mut documents = vec![];
+    for record in snapshot.mappings.into_values() {
+        let mapping = record.mapping;
+        let document = LoreDocument::from_reference(mapping.document)?;
+        let local = if let LoreDocument::Local { id } = &document {
+            snapshot.documents.get(id)
+        } else {
+            None
+        };
+        if mapping.archived || local.is_some_and(|r| r.document.archived) {
+            continue;
+        }
+        documents.push(RoutingDocument {
+            store: store.clone(),
+            mapping: Some(mapping.id),
+            document,
+            title: local.map(|r| r.document.title.clone()),
+            scopes: mapping.scopes,
+            anchors: mapping
+                .anchors
+                .into_iter()
+                .map(|a| AnchorSummary {
+                    id: a.id,
+                    path: a.path,
+                    start: a.start,
+                    end: a.end,
+                    context: a.context,
+                })
+                .collect(),
+        });
+    }
+    for record in snapshot
+        .documents
+        .into_values()
+        .filter(|r| !r.document.archived)
+    {
+        documents.push(RoutingDocument {
+            store: store.clone(),
+            mapping: None,
+            document: LoreDocument::Local {
+                id: record.document.id,
+            },
+            title: Some(record.document.title),
+            scopes: vec![],
+            anchors: record
+                .document
+                .anchors
+                .into_iter()
+                .map(|a| AnchorSummary {
+                    id: a.id,
+                    path: a.path,
+                    start: a.start,
+                    end: a.end,
+                    context: a.context,
+                })
+                .collect(),
+        });
+    }
+    Ok(documents)
 }

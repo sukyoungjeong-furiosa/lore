@@ -14,17 +14,18 @@ description: Stop 훅이 기록 점검을 요청하거나 사용자가 Lore에 �
 1. `context discover`와 `search`로 같은 주제의 문서를 찾아 읽는다. 중앙 문서는 `--central show <id>`, 외부 문서는 `docs show <backend> <id>`로 읽는다.
 2. `status`와 `worktree`로 기존 작업을 확인한다. 다른 작업의 미커밋 변경이나 미제출 커밋을 함께 게시하지 않는다. 기존 문서를 수정할 때는 `pull`로 중앙 변경을 반영하고 자기 브랜치의 문서를 다시 읽는다. 충돌을 자동 해결하지 않는다.
 3. 사용자의 언어로 결론과 적용 범위를 먼저 적고 이유와 근거를 짧게 붙인다. 확인한 사실과 가설을 구분한다. 코드 연결은 핵심 위치만 남기고, 현재 코드가 실험 당시 코드인 것처럼 연결하지 않는다.
-4. 기록과 연결을 마치면 선택한 문서를 커밋하고 로컬 중앙에 제출한다. 편집·연결·커밋에는 직전에 반환된 `revision`을 사용한다.
+4. 기록과 연결을 마치면 선택한 문서와 Mapping을 각각 커밋하고 로컬 중앙에 제출한다. 편집·연결·커밋에는 직전에 반환된 `revision`을 사용한다.
 
 ```bash
 lore --repo <checkout> --json --author agent create "스케줄러의 자원 제약" --stdin
 lore --repo <checkout> --json --author agent edit <document-id> --if-match <revision> --stdin
-lore --repo <checkout> --json --author agent attach <document-id> src/scheduler/plan.rs:10-30 --if-match <revision>
-lore --repo <checkout> --json --author agent commit <document-id> --if-match <final-revision>
+lore --repo <checkout> --json --author agent map create local <document-id> src/scheduler/plan.rs:10-30
+lore --repo <checkout> --json --author agent commit <document-id> --if-match <document-revision>
+lore --repo <checkout> --json --author agent commit <mapping-id> --mapping --if-match <mapping-revision>
 lore --repo <checkout> --json push
 ```
 
-`--stdin`은 전체 본문이다. 새 문서의 ID는 `document.id`에서 얻는다. 다른 Local Document는 `[[id:<document-id>|표시 이름]]`으로 참조한다.
+`--stdin`은 전체 본문이다. 새 문서의 ID는 `document.id`, Mapping의 ID는 `record.mapping.id`에서 얻는다. 다른 Local Document는 `[[id:<document-id>|표시 이름]]`으로 참조한다.
 
 커밋은 자기 작업 브랜치에만 남는다. Push가 로컬 중앙에 통합되어야 중앙 화면과 다른 작업자가 발견할 수 있다. 다른 작업 브랜치는 Pull로 반영한다. `push --proposal`은 통합 없이 검토할 제안을 남긴다.
 

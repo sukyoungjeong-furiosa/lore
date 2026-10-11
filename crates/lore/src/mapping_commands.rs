@@ -2,7 +2,7 @@ use clap::{Subcommand, ValueEnum};
 use lore_core::{
     Actor, AnchorResolver, Error, MappingId, PathScope, Result, RevisionId, TextResolver,
 };
-use lore_local::{CatalogConnection, CatalogStore, LocatedMapping, Workspace};
+use lore_local::{LocatedMapping, Workspace};
 use lore_resolver::{ChatProposer, ModelResolver};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
@@ -31,20 +31,20 @@ pub enum MapOperation {
         #[arg(long, value_enum)]
         take: ConflictChoice,
     },
-    /// Configure an HTTP mapping catalog for this repository across worktrees.
-    #[command(alias = "source")]
+    /// Retired: use Lore remote connections and proposal-based sharing.
+    #[command(alias = "source", hide = true)]
     Catalog {
         #[command(subcommand)]
         command: CatalogOperation,
     },
-    /// Fetch mapping catalog metadata without reading documents or activating mapping revisions.
+    #[command(hide = true)]
     Fetch {
         #[arg(long)]
         id: Option<MappingId>,
         #[arg(long)]
         max_age_seconds: Option<u64>,
     },
-    /// Publish one mapping to the local shared catalog; backend content is unchanged.
+    #[command(hide = true)]
     Publish {
         id: MappingId,
         #[arg(long)]
@@ -139,6 +139,24 @@ pub enum CatalogOperation {
     },
     Show,
     Remove,
+}
+
+fn reference(
+    workspace: &Workspace,
+    home: &Path,
+    backend: &str,
+    document: &str,
+) -> Result<lore_core::DocumentReference> {
+    if backend == "local" {
+        let id: lore_core::DocumentId = document.parse()?;
+        workspace.read(&id, None)?;
+        Ok(lore_core::DocumentReference {
+            backend: backend.into(),
+            id: id.to_string(),
+        })
+    } else {
+        super::backend_commands::reference(home, backend, document)
+    }
 }
 
 fn capture(workspace: &Workspace, location: &str) -> Result<lore_core::Anchor> {
@@ -263,44 +281,9 @@ pub fn execute(
 ) -> Result<Value> {
     match command {
         MapOperation::ResolveConflict { .. } => unreachable!(),
-        MapOperation::Catalog { command } => {
-            let store = CatalogStore::new(home, &workspace.code.repository_id);
-            match command {
-                CatalogOperation::Set { url, token_env } => {
-                    store.configure(Some(&CatalogConnection {
-                        url: url.clone(),
-                        token_env: token_env.clone(),
-                    }))?;
-                    Ok(json!({"source":store.connection()?}))
-                }
-                CatalogOperation::Show => Ok(json!({"source":store.connection()?})),
-                CatalogOperation::Remove => {
-                    store.configure(None)?;
-                    Ok(json!({"source":null}))
-                }
-            }
-        }
-        MapOperation::Fetch {
-            max_age_seconds,
-            id,
-        } => {
-            if id.is_some() {
-                return Err(Error::invalid("Fetching a full mapping requires --remote"));
-            }
-            Ok(serde_json::to_value(
-                CatalogStore::new(home, &workspace.code.repository_id).fetch(*max_age_seconds)?,
-            )?)
-        }
-        MapOperation::Publish {
-            id,
-            if_match,
-            if_shared,
-        } => Ok(serde_json::to_value(workspace.publish_mapping(
-            home,
-            id,
-            if_match,
-            if_shared.as_ref(),
-        )?)?),
+        MapOperation::Catalog { .. }
+        | MapOperation::Fetch { .. }
+        | MapOperation::Publish { .. } => Err(super::sync_commands::retired()),
         MapOperation::Create {
             backend,
             document,
@@ -308,7 +291,7 @@ pub fn execute(
             glob,
             context,
         } => {
-            let reference = super::backend_commands::reference(home, backend, document)?;
+            let reference = reference(workspace, home, backend, document)?;
             Ok(serde_json::to_value(
                 workspace.create_mapping(
                     reference,
@@ -350,7 +333,7 @@ pub fn execute(
                     .collect()
             };
             if let (Some(backend), Some(document)) = (backend, document) {
-                let reference = super::backend_commands::reference(home, backend, document)?;
+                let reference = reference(workspace, home, backend, document)?;
                 mappings.retain(|item| item.view.record.mapping.document == reference);
             }
             Ok(json!({

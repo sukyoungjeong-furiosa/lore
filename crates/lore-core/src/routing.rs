@@ -12,6 +12,18 @@ pub enum LoreDocument {
     Local { id: DocumentId },
 }
 
+impl LoreDocument {
+    pub fn from_reference(reference: DocumentReference) -> Result<Self> {
+        if reference.backend == "local" {
+            Ok(Self::Local {
+                id: reference.id.parse()?,
+            })
+        } else {
+            Ok(Self::Backend { reference })
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RoutingDocument {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -101,6 +113,9 @@ pub fn discover_lore(
                 mappings: vec![],
                 shared_mappings: vec![],
             });
+        if related.title.is_none() {
+            related.title = document.title.clone();
+        }
         if let Some(id) = &document.mapping
             && !related.mappings.contains(id)
         {

@@ -111,7 +111,7 @@ impl WorkspaceState {
             1 => Ok(candidates.pop().unwrap()),
             _ => Err(Error::new(
                 ErrorKind::Conflict,
-                "Mapping ID exists in several stores; select --remote or --store explicitly",
+                "Mapping ID exists in several stores; select --store explicitly",
             )),
         }
     }
@@ -279,17 +279,19 @@ impl Workspace {
         if self.mapping_store.is_none() && !self.central_view {
             scopes.push((None, &state.mappings));
         }
-        scopes.extend(
-            state
-                .store_mappings
-                .iter()
-                .filter(|(store, _)| {
-                    self.mapping_store
-                        .as_ref()
-                        .is_none_or(|selected| *store == selected)
-                })
-                .map(|(store, mappings)| (Some(store.clone()), mappings)),
-        );
+        if !self.central_view || self.mapping_store.is_some() {
+            scopes.extend(
+                state
+                    .store_mappings
+                    .iter()
+                    .filter(|(store, _)| {
+                        self.mapping_store
+                            .as_ref()
+                            .is_none_or(|selected| *store == selected)
+                    })
+                    .map(|(store, mappings)| (Some(store.clone()), mappings)),
+            );
+        }
         let mut views = vec![];
         if self.mapping_store.is_none() {
             for (id, record) in self.committed_knowledge_mappings(&state)? {

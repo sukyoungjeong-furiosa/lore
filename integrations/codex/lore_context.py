@@ -107,7 +107,7 @@ def refresh(repo):
         if not acquired:
             return
         results = []
-        operations = [('mappings', ['map', 'fetch', '--max-age-seconds', '300'], 15)]
+        operations = []
         for remote in sorted(set(state.get('connected_remotes', {}).values())):
             operations.append(('knowledge:' + remote, ['fetch', '--remote', remote], 25))
         for backend in run(repo, 'backend', 'list'):

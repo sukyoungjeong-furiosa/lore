@@ -5,6 +5,7 @@ Lore distinguishes working commits, change proposals, and accepted central knowl
 ## Commit and Submission
 
 - Commit records selected Lore-owned document or mapping changes on a working branch. It does not publish them to central knowledge.
+- Direct mapping publication is retired; documents and mappings use the same submission and integration path.
 - Push submits an immutable proposal with a fixed baseline and proposed state. Submission and integration are distinct outcomes.
 - Local proposals use the working branch's common ancestor with central history. Remote proposals use the destination state last incorporated by Pull.
 - Local Push may integrate a non-conflicting proposal immediately. Proposal-only submission is available; remote submission does not imply acceptance.

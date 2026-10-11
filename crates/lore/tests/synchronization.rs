@@ -119,7 +119,7 @@ fn git(repo: &Path, args: &[&str]) {
 }
 
 struct Setup {
-    temp: tempfile::TempDir,
+    _temp: tempfile::TempDir,
     daemon: Daemon,
     alice: Client,
     bob: Client,
@@ -191,7 +191,7 @@ impl Setup {
         alice.connect("team", "team", &daemon.url, "test-only-alice");
         bob.connect("team", "team", &daemon.url, "test-only-bob");
         Self {
-            temp,
+            _temp: temp,
             daemon,
             alice,
             bob,
@@ -203,12 +203,36 @@ impl Setup {
 }
 
 #[test]
-fn discovery_does_not_reuse_another_connections_catalog_for_the_same_store() {
+fn discovery_does_not_reuse_another_connections_knowledge_for_the_same_store() {
     let setup = Setup::new();
+    setup.alice.ok(&["pull", "--remote", "team"]);
     let mapping = setup.create("src/scheduler.rs:1", "00000000-0000-4000-8000-000000000001");
     let id = mapping["record"]["mapping"]["id"].as_str().unwrap();
-    setup.alice.ok(&["push", "--remote", "team", id]);
-    setup.bob.ok(&["map", "fetch", "--remote", "team"]);
+    setup.alice.ok(&[
+        "commit",
+        id,
+        "--mapping",
+        "--if-match",
+        mapping["revision"].as_str().unwrap(),
+    ]);
+    setup.alice.ok(&["push"]);
+    let proposal = setup
+        .alice
+        .ok(&["push", "--remote", "team", "--mapping-id", id]);
+    let proposal = proposal["proposal"]["id"].as_str().unwrap();
+    let review = setup
+        .alice
+        .ok(&["proposal", "--remote", "team", "show", proposal]);
+    setup.alice.ok(&[
+        "proposal",
+        "--remote",
+        "team",
+        "integrate",
+        proposal,
+        "--if-match",
+        review["central"]["version"].as_str().unwrap(),
+    ]);
+    setup.bob.ok(&["fetch", "--remote", "team"]);
     setup.bob.ok(&["remote", "connect", "team"]);
     let known = setup
         .bob
@@ -244,226 +268,32 @@ fn discovery_does_not_reuse_another_connections_catalog_for_the_same_store() {
 }
 
 #[test]
-fn two_users_share_mapping_history_discovery_projection_and_explicit_conflict_resolution() {
+fn mapping_only_publication_is_rejected_without_changing_shared_knowledge() {
     let setup = Setup::new();
-    let first = setup.create("src/scheduler.rs:1", "00000000-0000-4000-8000-000000000001");
-    let other = setup.create("src/other.rs:1", "00000000-0000-4000-8000-000000000002");
-    let id = first["record"]["mapping"]["id"].as_str().unwrap();
-    let original = first["revision"].as_str().unwrap();
-    setup.alice.ok(&["push", "--remote", "team", id]);
-    setup.alice.ok(&[
-        "push",
-        "--remote",
-        "team",
-        other["record"]["mapping"]["id"].as_str().unwrap(),
-    ]);
-    let before = setup.bob.ok(&["status"]);
-    let fetched = setup.bob.ok(&["map", "fetch", "--remote", "team"]);
-    assert_eq!(
-        fetched["catalog"]["catalog"]["mappings"]
-            .as_object()
-            .unwrap()
-            .len(),
-        2
-    );
-    assert!(!fetched.to_string().contains("snapshot"));
-    assert_eq!(before, setup.bob.ok(&["status"]));
-    setup.bob.ok(&["remote", "connect", "team"]);
-    let discovered = setup
-        .bob
-        .ok(&["context", "discover", "src/scheduler.rs", "--refresh"]);
-    assert_eq!(
-        discovered["documents"][0]["shared_mappings"][0]["store"],
-        "team"
-    );
+    let mapping = setup.create("src/scheduler.rs:1", "00000000-0000-4000-8000-000000000001");
+    let id = mapping["record"]["mapping"]["id"].as_str().unwrap();
+    for args in [
+        vec!["push", "--remote", "team", id],
+        vec![
+            "map",
+            "publish",
+            id,
+            "--if-match",
+            mapping["revision"].as_str().unwrap(),
+        ],
+        vec!["pull", "--remote", "team", "--id", id],
+        vec!["map", "fetch", "--remote", "team"],
+    ] {
+        let output = setup.alice.run(&args, None);
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("unsupported"));
+    }
     assert!(
-        setup.bob.ok(&["map", "ls"])["mappings"]
-            .as_array()
+        setup.bob.ok(&["fetch", "--remote", "team"])["knowledge"]["snapshot"]["mappings"]
+            .as_object()
             .unwrap()
             .is_empty()
     );
-    git(
-        &setup.bob.repo,
-        &["mv", "src/scheduler.rs", "src/planner.rs"],
-    );
-    git(&setup.bob.repo, &["commit", "-qm", "rename"]);
-    let pulled = setup
-        .bob
-        .ok(&["pull", "--remote", "team", "--path", "src/planner.rs"]);
-    assert_eq!(pulled["results"].as_array().unwrap().len(), 1);
-    assert_eq!(
-        setup.bob.ok(&["map", "ls", "--remote", "team"])["mappings"]
-            .as_array()
-            .unwrap()
-            .len(),
-        1
-    );
-    assert_eq!(
-        setup.bob.ok(&["map", "resolve", id, "--remote", "team"])["projections"][0]["locations"][0]
-            ["path"],
-        "src/planner.rs"
-    );
-    let b = setup.bob.ok(&[
-        "map",
-        "edit",
-        id,
-        "--remote",
-        "team",
-        "--if-match",
-        original,
-        "--context",
-        "bob change",
-    ]);
-    let a = setup.alice.ok(&[
-        "map",
-        "edit",
-        id,
-        "--remote",
-        "team",
-        "--if-match",
-        original,
-        "--context",
-        "alice change",
-    ]);
-    setup.alice.ok(&["push", "--remote", "team", id]);
-    let rejected = setup.bob.run(&["push", "--remote", "team", id], None);
-    assert_eq!(
-        serde_json::from_slice::<Value>(&rejected.stderr).unwrap()["error"]["kind"],
-        "conflict"
-    );
-    let conflict = setup
-        .bob
-        .run(&["pull", "--remote", "team", "--id", id], None);
-    assert_eq!(conflict.status.code(), Some(3));
-    assert_eq!(
-        serde_json::from_slice::<Value>(&conflict.stdout).unwrap()["results"][0]["status"],
-        "conflict"
-    );
-    assert_eq!(
-        setup.bob.ok(&["map", "show", id, "--remote", "team"])["revision"],
-        b["revision"]
-    );
-    setup.bob.ok(&[
-        "map",
-        "resolve-conflict",
-        id,
-        "--remote",
-        "team",
-        "--if-match",
-        b["revision"].as_str().unwrap(),
-        "--if-shared",
-        a["revision"].as_str().unwrap(),
-        "--take",
-        "local",
-    ]);
-    setup.bob.ok(&["push", "--remote", "team", id]);
-    setup.alice.ok(&["pull", "--remote", "team", "--id", id]);
-    assert_eq!(
-        setup.alice.ok(&["map", "show", id, "--remote", "team"])["record"]["mapping"]["context"],
-        "bob change"
-    );
-    setup
-        .alice
-        .connect("personal", "personal", &setup.daemon.url, "test-only-alice");
-    setup
-        .alice
-        .ok(&["push", "--remote", "personal", id, "--from-remote", "team"]);
-    assert!(!setup.alice.run(&["map", "show", id], None).status.success());
-    let personal = setup.alice.ok(&["map", "show", id, "--remote", "personal"]);
-    let private_edit = setup.alice.ok(&[
-        "map",
-        "edit",
-        id,
-        "--remote",
-        "personal",
-        "--if-match",
-        personal["revision"].as_str().unwrap(),
-        "--context",
-        "personal context",
-    ]);
-    assert!(
-        !setup
-            .alice
-            .run(
-                &[
-                    "map",
-                    "show",
-                    id,
-                    "--remote",
-                    "team",
-                    "--revision",
-                    private_edit["revision"].as_str().unwrap(),
-                ],
-                None,
-            )
-            .status
-            .success()
-    );
-    assert_eq!(
-        setup.alice.ok(&["map", "show", id, "--remote", "team"])["record"]["mapping"]["context"],
-        "bob change"
-    );
-    let related = setup
-        .alice
-        .ok(&["context", "discover", "src/scheduler.rs", "--cached"]);
-    assert_eq!(
-        related["documents"][0]["shared_mappings"]
-            .as_array()
-            .unwrap()
-            .len(),
-        2
-    );
-    assert!(
-        !setup
-            .bob
-            .run(&["remote", "inspect", "personal"], None)
-            .status
-            .success()
-    );
-}
-
-#[test]
-fn server_restart_preserves_heads_and_read_only_credentials_cannot_publish() {
-    let mut setup = Setup::new();
-    let first = setup.create("src/scheduler.rs:1", "00000000-0000-4000-8000-000000000001");
-    let id = first["record"]["mapping"]["id"].as_str().unwrap();
-    setup.alice.ok(&["push", "--remote", "team", id]);
-    setup.bob.input(
-        &["remote", "auth", "set", "team", "--stdin"],
-        Some("test-only-reader"),
-    );
-    setup.bob.ok(&["pull", "--remote", "team", "--id", id]);
-    let output = setup.bob.run(&["push", "--remote", "team", id], None);
-    assert_eq!(
-        serde_json::from_slice::<Value>(&output.stderr).unwrap()["error"]["kind"],
-        "permission_denied"
-    );
-    let descriptor = setup.bob.ok(&["remote", "inspect", "team"]);
-    assert_eq!(descriptor["repositories"].as_object().unwrap().len(), 1);
-    setup.daemon.child.kill().unwrap();
-    setup.daemon.child.wait().unwrap();
-    let restarted = Daemon::start(setup.temp.path());
-    setup.daemon = restarted;
-    setup
-        .alice
-        .ok(&["remote", "set-url", "team", &setup.daemon.url]);
-    assert!(
-        !setup
-            .alice
-            .run(&["remote", "inspect", "team"], None)
-            .status
-            .success()
-    );
-    setup.alice.input(
-        &["remote", "auth", "set", "team", "--stdin"],
-        Some("test-only-alice"),
-    );
-    assert_eq!(
-        setup.alice.ok(&["map", "fetch", "--remote", "team"])["catalog"]["catalog"]["mappings"][id]
-            ["view"]["revision"],
-        first["revision"]
-    );
-    setup.alice.ok(&["pull", "--remote", "team", "--id", id]);
 }
 
 #[test]
@@ -688,5 +518,51 @@ fn knowledge_proposals_share_between_people_over_http_without_git_remotes() {
     assert_eq!(
         b.ok(&["--central", "show", id])["document"]["content"],
         "Bob's conclusion"
+    );
+}
+
+#[test]
+fn restarting_the_server_preserves_integrated_mapping_proposals() {
+    let mut s = Setup::new();
+    let a = &s.alice;
+    a.ok(&["pull", "--remote", "team"]);
+    let mapping = s.create("src/scheduler.rs:1", "00000000-0000-4000-8000-000000000001");
+    let id = mapping["record"]["mapping"]["id"].as_str().unwrap();
+    a.ok(&[
+        "commit",
+        id,
+        "--mapping",
+        "--if-match",
+        mapping["revision"].as_str().unwrap(),
+    ]);
+    a.ok(&["push"]);
+    let submitted = a.ok(&["push", "--remote", "team", "--mapping-id", id]);
+    let proposal = submitted["proposal"]["id"].as_str().unwrap();
+    let review = a.ok(&["proposal", "--remote", "team", "show", proposal]);
+    let accepted = a.ok(&[
+        "proposal",
+        "--remote",
+        "team",
+        "integrate",
+        proposal,
+        "--if-match",
+        review["central"]["version"].as_str().unwrap(),
+    ]);
+    s.daemon.child.kill().unwrap();
+    s.daemon.child.wait().unwrap();
+    s.daemon = Daemon::start(s._temp.path());
+    a.ok(&["remote", "set-url", "team", &s.daemon.url]);
+    a.input(
+        &["remote", "auth", "set", "team", "--stdin"],
+        Some("test-only-alice"),
+    );
+    let fetched = a.ok(&["fetch", "--remote", "team"]);
+    assert_eq!(
+        fetched["knowledge"]["snapshot"]["mappings"][id],
+        mapping["record"]
+    );
+    assert_eq!(
+        a.ok(&["proposal", "--remote", "team", "show", proposal])["proposal"]["integrated"],
+        accepted["version"]["version"]
     );
 }

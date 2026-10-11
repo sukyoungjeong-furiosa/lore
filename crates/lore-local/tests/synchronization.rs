@@ -1,3 +1,5 @@
+//! Legacy storage fixtures remain readable for migration; production publication uses knowledge proposals.
+
 use lore_core::*;
 use lore_local::*;
 use lore_server::*;
@@ -12,6 +14,7 @@ use std::{
 struct LocalRemote {
     store: KnowledgeStoreId,
     server: Arc<Server>,
+    storage: Arc<FileSharedStore>,
     lose_response: Cell<bool>,
     after_publish: RefCell<Option<Box<dyn FnOnce()>>>,
     after_read: RefCell<Option<Box<dyn FnOnce()>>>,
@@ -56,9 +59,9 @@ impl MappingStoreClient for LocalRemote {
         }
     }
     fn publish(&self, request: &PublishMapping) -> Result<PublicationReceipt> {
-        let response = self.execute(StoreRequest::Publish {
-            request: request.clone(),
-        })?;
+        let receipt = self
+            .storage
+            .publish(&self.descriptor()?, "alice", request)?;
         if let Some(action) = self.after_publish.borrow_mut().take() {
             action();
         }
@@ -68,10 +71,7 @@ impl MappingStoreClient for LocalRemote {
                 "Response lost after publication",
             ));
         }
-        match response {
-            StoreResponse::Published { receipt } => Ok(receipt),
-            _ => unreachable!(),
-        }
+        Ok(receipt)
     }
 }
 
@@ -137,19 +137,15 @@ impl Setup {
                     .collect(),
             }],
         };
-        let server = Arc::new(
-            Server::new(
-                config,
-                Arc::new(FileSharedStore {
-                    directory: temp.path().join("server"),
-                }),
-                |_| Some("test-token".into()),
-            )
-            .unwrap(),
-        );
+        let storage = Arc::new(FileSharedStore {
+            directory: temp.path().join("server"),
+        });
+        let server =
+            Arc::new(Server::new(config, storage.clone(), |_| Some("test-token".into())).unwrap());
         let remote = LocalRemote {
             store: "team".parse().unwrap(),
             server,
+            storage,
             lose_response: Cell::new(false),
             after_publish: RefCell::new(None),
             after_read: RefCell::new(None),

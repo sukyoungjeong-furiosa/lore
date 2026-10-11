@@ -255,21 +255,24 @@ export function activate(context: vscode.ExtensionContext) {
       if (!source) return;
       selected = { root, title: chosen.label, source };
     }
+    if (selected.source.kind === 'local' && selected.source.revision) throw new Error('Open the current document revision before linking code.');
+    const pending = await call<{ unsubmitted_documents: string[]; unsubmitted_mappings: string[] }>(root,['worktree']);
+    if (pending.unsubmitted_documents.length || pending.unsubmitted_mappings.length) throw new Error('This branch has committed changes awaiting submission. Inspect and submit them with the Lore CLI before creating a shared code link.');
+    const reference = selected.source.kind === 'local' ? { backend: 'local', id: selected.source.id } : selected.source.reference;
     if (selected.source.kind === 'local') {
-      if (selected.source.revision) throw new Error('Open the current document revision before linking code.');
-      if (!selected.source.working) { await call(root,['pull']); await call(root,['checkout',selected.source.id]); }
-      const view = await call<View>(root, ['show', selected.source.id]);
-      await call(root, ['attach', view.document.id, location, '--if-match', view.revision]);
-      refresh(); await open(view.document.id, root, true);
-    } else {
-      const reference = selected.source.reference;
-      const pending = await call<{ unsubmitted_documents: string[]; unsubmitted_mappings: string[] }>(root,['worktree']);
-      if (pending.unsubmitted_documents.length || pending.unsubmitted_mappings.length) throw new Error('This branch has committed changes awaiting submission. Inspect and submit them with the Lore CLI before creating a shared code link.');
-      const created=await call<import('./client').MappingView>(root, ['map', 'create', reference.backend, reference.id, location]);
-      await call(root,['commit',created.record.mapping.id,'--mapping','--if-match',created.revision]);
-      await call(root,['push']);
-      refresh(); await openBackend(reference, root);
+      await call(root, ['pull']);
+      try { await call<View>(root, ['--central', 'show', reference.id]); }
+      catch (error) {
+        if (error instanceof LoreError && error.kind === 'not_found') throw new Error('Publish the new document before creating a shared code link, or use the CLI to commit the document and mapping together.');
+        throw error;
+      }
     }
+    const created=await call<import('./client').MappingView>(root, ['map', 'create', reference.backend, reference.id, location]);
+    await call(root,['commit',created.record.mapping.id,'--mapping','--if-match',created.revision]);
+    await call(root,['push']);
+    refresh();
+    if (selected.source.kind === 'local') await open(reference.id, root);
+    else await openBackend(reference, root);
   });
   command('lore.attachNotion', () => vscode.commands.executeCommand('lore.attach'));
   let refreshing: Promise<void> | undefined;
@@ -337,7 +340,7 @@ export function activate(context: vscode.ExtensionContext) {
         ]);
         const localLenses = result.documents.flatMap(d => d.projections.flatMap(p => p.locations.filter(l => vscode.Uri.joinPath(vscode.Uri.file(root), l.path).fsPath === document.uri.fsPath && l.start <= document.lineCount).map(l => new vscode.CodeLens(new vscode.Range(l.start - 1, 0, l.start - 1, 0), { command: 'lore.open', title: `Lore: ${d.view.document.title}`, arguments: [d.view.document.id, root] }))));
         const backendLenses = mapped.mappings.flatMap(({ view, projections }) => projections.flatMap(p => p.locations.filter(l => vscode.Uri.joinPath(vscode.Uri.file(root), l.path).fsPath === document.uri.fsPath && l.start <= document.lineCount).map(l => new vscode.CodeLens(new vscode.Range(l.start - 1, 0, l.start - 1, 0), {
-          command: 'lore.openBackend', title: `Lore: ${view.record.mapping.context || view.record.mapping.document.backend}`, arguments: [view.record.mapping.document, root],
+          command: view.record.mapping.document.backend === 'local' ? 'lore.open' : 'lore.openBackend', title: `Lore: ${view.record.mapping.context || view.record.mapping.document.backend}`, arguments: [view.record.mapping.document.backend === 'local' ? view.record.mapping.document.id : view.record.mapping.document, root],
         }))));
         return [...localLenses, ...backendLenses];
       } catch (error) {

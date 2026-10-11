@@ -820,17 +820,15 @@ fn initialization_migrates_published_legacy_mappings_without_publishing_drafts()
         None,
     );
     let id = shared["record"]["mapping"]["id"].as_str().unwrap();
-    s.ok(
-        &s.repo,
-        &[
-            "map",
-            "publish",
-            id,
-            "--if-match",
-            shared["revision"].as_str().unwrap(),
-        ],
-        None,
-    );
+    let workspace = lore_local::Workspace::open(&s.home, &s.repo).unwrap();
+    workspace
+        .publish_mapping(
+            &s.home,
+            &id.parse().unwrap(),
+            &shared["revision"].as_str().unwrap().parse().unwrap(),
+            None,
+        )
+        .unwrap();
     let draft = s.ok(
         &s.repo,
         &[

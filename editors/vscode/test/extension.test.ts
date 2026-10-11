@@ -494,10 +494,14 @@ if (args.includes('edit')) {
     assert.equal((await mockState()).requestCount, beforeLinkRequests, 'Linking uses the selected reference and cached document');
     await api.open(target.document.id, root);
     await eventually(async () => api.mappings.summary?.count === 0 ? true : undefined);
+    const beforeLocalLink = cli(['show', target.document.id]);
     await vscode.commands.executeCommand('lore.attach');
     const linkedLocal = cli(['show', target.document.id]);
-    assert.equal(linkedLocal.document.anchors.length, 1, 'The same command attaches selected local documents');
-    assert.equal(linkedLocal.document.anchors[0].path, 'planner.py');
+    assert.equal(linkedLocal.revision, beforeLocalLink.revision, 'Mapping publication preserves pending document edits');
+    assert.equal(linkedLocal.document.anchors.length, 0, 'Code linking does not mutate document content or revision');
+    const ownedMappings = cli(['--central', 'map', 'ls', '--backend', 'local', '--document', target.document.id]).mappings;
+    assert.equal(ownedMappings.length, 1);
+    assert.equal(ownedMappings[0].view.record.mapping.anchors[0].path, 'planner.py');
     await eventually(async () => (await mappingHeader.textContent())?.includes('Scheduling Rules · 1 code link') ? true : undefined);
     assert.equal(await workbench.locator('.quick-input-widget').isVisible(), false);
     assert.equal(vscode.extensions.getExtension('lore-local.lore')!.packageJSON.contributes.menus['editor/context'].filter((item: any) => item.command.startsWith('lore.attach')).length, 1, 'Code linking has one context-menu command');

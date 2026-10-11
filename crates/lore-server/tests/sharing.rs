@@ -203,7 +203,7 @@ fn concurrent_updates_have_one_winner_and_do_not_publish_the_losing_revision() {
 }
 
 #[test]
-fn grants_do_not_combine_into_unauthorized_repository_backend_pairs() {
+fn retired_publication_cannot_bypass_the_proposal_path_or_authentication() {
     let temp = tempfile::tempdir().unwrap();
     let team = descriptor("team");
     let config = ServerConfig {
@@ -237,9 +237,13 @@ fn grants_do_not_combine_into_unauthorized_repository_backend_pairs() {
     .unwrap();
     let first = view(None, "first");
     let good = request(&team, vec![first.clone()], None);
-    server
-        .execute("test-token", StoreRequest::Publish { request: good })
-        .unwrap();
+    assert_eq!(
+        server
+            .execute("test-token", StoreRequest::Publish { request: good })
+            .unwrap_err()
+            .kind,
+        ErrorKind::Unsupported
+    );
     let mut forbidden = view(None, "private");
     forbidden.record.mapping.document.backend = "private".into();
     forbidden.revision = forbidden.record.id().unwrap();
@@ -253,7 +257,7 @@ fn grants_do_not_combine_into_unauthorized_repository_backend_pairs() {
             )
             .unwrap_err()
             .kind,
-        ErrorKind::PermissionDenied
+        ErrorKind::Unsupported
     );
     forbidden.record.mapping.scopes[0].repository = "kernels".into();
     forbidden.revision = forbidden.record.id().unwrap();
@@ -267,7 +271,7 @@ fn grants_do_not_combine_into_unauthorized_repository_backend_pairs() {
             )
             .unwrap_err()
             .kind,
-        ErrorKind::PermissionDenied
+        ErrorKind::Unsupported
     );
     assert_eq!(
         server
@@ -303,7 +307,7 @@ fn grants_do_not_combine_into_unauthorized_repository_backend_pairs() {
         )
         .unwrap()
     {
-        StoreResponse::Catalog { catalog } => assert_eq!(catalog.catalog.mappings.len(), 1),
+        StoreResponse::Catalog { catalog } => assert_eq!(catalog.catalog.mappings.len(), 0),
         _ => panic!("wrong response"),
     }
 }

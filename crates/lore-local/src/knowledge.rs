@@ -120,7 +120,14 @@ impl Workspace {
                 .map(|baseline| (id, baseline))
         });
         let selected = shared.collect::<Vec<_>>();
-        if selected.is_empty() {
+        let legacy = crate::LocalMappingClient::new(
+            state
+                .local_store
+                .clone()
+                .ok_or_else(|| Error::new(ErrorKind::NotInitialized, "Run lore init"))?,
+        )?;
+        let catalog = legacy.catalog(&self.code.repository_id)?;
+        if selected.is_empty() && catalog.catalog.mappings.is_empty() {
             return Ok(());
         }
         history.initialize()?;
@@ -134,6 +141,17 @@ impl Workspace {
                     self.mapping_repository
                         .load(id, &baseline.revision.parse()?)?,
                 );
+            }
+        }
+        for id in catalog.catalog.mappings.keys() {
+            if let std::collections::btree_map::Entry::Vacant(entry) =
+                snapshot.mappings.entry(id.clone())
+            {
+                let bundle = legacy.read(id, None)?;
+                for view in &bundle.revisions {
+                    self.mapping_repository.record(&view.record)?;
+                }
+                entry.insert(bundle.head()?.record.clone());
             }
         }
         if snapshot != central.snapshot {
@@ -321,6 +339,13 @@ impl Workspace {
             }
             Err(error) => Err(error),
         }
+    }
+
+    /// Reads accepted local knowledge without changing the working branch or its baseline.
+    pub fn fetch_knowledge(&self) -> Result<KnowledgeVersion> {
+        self.knowledge_history(&self.state()?)?
+            .ok_or_else(|| Error::new(ErrorKind::NotInitialized, "Run lore init"))?
+            .read_version("main")
     }
 
     pub fn knowledge_proposals(&self) -> Result<Vec<KnowledgeProposal>> {
@@ -540,6 +565,10 @@ impl Workspace {
         history.refresh_worktree(&worktree.path)?;
         let record = version.snapshot.mappings[id].clone();
         let revision = self.mapping_repository.record(&record)?;
+        state.local_store.as_ref().unwrap().register(
+            std::slice::from_ref(&self.code.repository_id),
+            std::slice::from_ref(&version.snapshot.mappings[id].mapping.document.backend),
+        )?;
         let mut state = state;
         state.mappings.insert(
             id.clone(),

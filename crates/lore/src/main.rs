@@ -57,6 +57,7 @@ impl From<Author> for Actor {
 enum Operation {
     /// Submit committed knowledge to the local central branch, or a Lore server.
     Push {
+        #[arg(hide = true)]
         id: Option<lore_core::MappingId>,
         #[arg(long)]
         proposal: bool,
@@ -68,33 +69,33 @@ enum Operation {
         all: bool,
         #[arg(long)]
         remote: Option<String>,
-        #[arg(long, conflicts_with = "remote")]
+        #[arg(long, hide = true, conflicts_with = "remote")]
         local_store: Option<String>,
-        #[arg(long)]
+        #[arg(long, hide = true)]
         from_remote: Option<String>,
-        #[arg(long, conflicts_with = "from_remote")]
+        #[arg(long, hide = true, conflicts_with = "from_remote")]
         from_local_store: Option<String>,
     },
-    /// Incorporate shared mappings for this repository without overwriting local changes.
+    /// Incorporate accepted knowledge without overwriting local changes.
     Pull {
         #[arg(long)]
         remote: Option<String>,
-        #[arg(long, conflicts_with = "remote")]
+        #[arg(long, hide = true, conflicts_with = "remote")]
         local_store: Option<String>,
-        #[arg(long, conflicts_with = "path")]
+        #[arg(long, hide = true, conflicts_with = "path")]
         id: Option<lore_core::MappingId>,
-        #[arg(long)]
+        #[arg(long, hide = true)]
         path: Option<PathBuf>,
-        #[arg(long)]
+        #[arg(long, hide = true)]
         backend: Option<String>,
     },
-    /// Cache shared mapping metadata or history without changing active revisions.
+    /// Retrieve accepted knowledge without changing the working branch or baselines.
     Fetch {
         #[arg(long)]
         remote: Option<String>,
-        #[arg(long, conflicts_with = "remote")]
+        #[arg(long, hide = true, conflicts_with = "remote")]
         local_store: Option<String>,
-        #[arg(long)]
+        #[arg(long, hide = true)]
         id: Option<lore_core::MappingId>,
     },
     /// Manage filesystem mapping stores independently of code repositories.
@@ -133,11 +134,11 @@ enum Operation {
     },
     /// Maintain independent code-to-document mappings.
     Map {
-        #[arg(long, global = true)]
+        #[arg(long, global = true, hide = true)]
         remote: Option<String>,
         #[arg(long, global = true, conflicts_with = "remote")]
         store: Option<lore_core::KnowledgeStoreId>,
-        #[arg(long, global = true, conflicts_with_all = ["remote", "store"])]
+        #[arg(long, global = true, hide = true, conflicts_with_all = ["remote", "store"])]
         local_store: Option<String>,
         #[command(subcommand)]
         command: mapping_commands::MapOperation,
@@ -377,123 +378,97 @@ fn execute(cli: &Cli) -> Result<Value> {
             "Central knowledge is read-only; edit mappings on a working branch",
         ));
     }
+    if let Operation::Map {
+        remote,
+        local_store,
+        store,
+        command,
+    } = &cli.command
+        && (remote.is_some()
+            || local_store.is_some()
+            || (store.is_some()
+                && !matches!(
+                    command,
+                    mapping_commands::MapOperation::Ls { .. }
+                        | mapping_commands::MapOperation::Show { .. }
+                        | mapping_commands::MapOperation::History { .. }
+                        | mapping_commands::MapOperation::Resolve { .. }
+                )))
+    {
+        return Err(sync_commands::retired());
+    }
     let workspace = if let Operation::Map {
         store: Some(store), ..
     } = &cli.command
     {
         workspace.with_mapping_store(store.clone())
-    } else if let Operation::Map {
-        local_store: Some(name),
-        ..
-    } = &cli.command
-    {
-        workspace.with_mapping_store(
-            lore_local::LocalStoreRegistry::new(&data_home)
-                .get(name)?
-                .store,
-        )
-    } else if let Operation::Map {
-        remote: Some(name), ..
-    } = &cli.command
-    {
-        sync_commands::scoped_workspace(workspace, &data_home, name)?
     } else {
         workspace
     };
     let actor: Actor = cli.author.into();
     match &cli.command {
         Operation::Push {
-            remote,
             id,
-            local_store,
-            from_remote,
-            from_local_store,
             proposal,
             document,
             mapping_id,
             all,
-        } if id.is_none() => {
-            if local_store.is_some() || from_remote.is_some() || from_local_store.is_some() {
-                return Err(Error::invalid(
-                    "Knowledge submission uses the selected store; mapping transfer flags require a mapping ID",
-                ));
+            remote,
+            local_store,
+            from_remote,
+            from_local_store,
+        } => {
+            if id.is_some()
+                || local_store.is_some()
+                || from_remote.is_some()
+                || from_local_store.is_some()
+            {
+                return Err(sync_commands::retired());
             }
             if let Some(remote) = remote {
+                if *proposal {
+                    return Err(Error::invalid("Remote Push already creates a proposal"));
+                }
                 workspace.push_remote_knowledge(&data_home, remote, document, mapping_id, *all)
             } else {
                 if !document.is_empty() || !mapping_id.is_empty() || *all {
                     return Err(Error::invalid(
-                        "Selection flags apply to remote submission; local submission proposes the working branch",
+                        "Local Push submits committed branch changes; object selection is for --remote",
                     ));
                 }
                 workspace.push_knowledge(*proposal)
             }
         }
-        Operation::Push {
-            id,
-            remote,
-            local_store,
-            from_remote,
-            from_local_store,
-            ..
-        } => sync_commands::push(
-            &workspace,
-            &data_home,
-            id.as_ref().unwrap(),
-            remote.as_deref(),
-            local_store.as_deref(),
-            from_remote.as_deref(),
-            from_local_store.as_deref(),
-        ),
         Operation::Pull {
             remote,
             local_store,
             id,
             path,
             backend,
-        } if id.is_none() && path.is_none() && backend.is_none() && local_store.is_none() => {
+        } => {
+            if local_store.is_some() || id.is_some() || path.is_some() || backend.is_some() {
+                return Err(sync_commands::retired());
+            }
             if let Some(remote) = remote {
                 workspace.pull_remote_knowledge(&data_home, remote)
             } else {
-                let mut result =
-                    sync_commands::pull(&workspace, &data_home, None, None, None, None, None)?;
-                result["knowledge"] = serde_json::to_value(workspace.pull_knowledge()?)?;
-                Ok(result)
+                Ok(serde_json::to_value(workspace.pull_knowledge()?)?)
             }
         }
-        Operation::Pull {
-            remote,
-            local_store,
-            id,
-            path,
-            backend,
-        } => sync_commands::pull(
-            &workspace,
-            &data_home,
-            remote.as_deref(),
-            local_store.as_deref(),
-            id.as_ref(),
-            path.as_ref(),
-            backend.as_deref(),
-        ),
         Operation::Fetch {
             remote,
             local_store,
             id,
-        } if id.is_none() && remote.is_some() && local_store.is_none() => {
-            workspace.fetch_remote_knowledge(&data_home, remote.as_ref().unwrap())
+        } => {
+            if local_store.is_some() || id.is_some() {
+                return Err(sync_commands::retired());
+            }
+            if let Some(remote) = remote {
+                workspace.fetch_remote_knowledge(&data_home, remote)
+            } else {
+                Ok(json!({"knowledge": workspace.fetch_knowledge()?}))
+            }
         }
-        Operation::Fetch {
-            remote,
-            local_store,
-            id,
-        } => sync_commands::fetch(
-            &workspace,
-            &data_home,
-            remote.as_deref(),
-            local_store.as_deref(),
-            id.as_ref(),
-        ),
         Operation::Context { command } => {
             context_commands::execute(&workspace, &data_home, command)
         }
@@ -522,102 +497,35 @@ fn execute(cli: &Cli) -> Result<Value> {
                         "Conflict resolution requires a store connection, rather than --store",
                     ));
                 }
-                if remote.is_none() && local_store.is_none() && {
-                    let state = workspace.state()?;
-                    state.knowledge_worktree.as_ref().is_some_and(|worktree| {
-                        state
-                            .mappings
-                            .get(id)
-                            .and_then(|a| a.shared_baseline.as_ref())
-                            .is_some_and(|baseline| {
-                                baseline.source
-                                    == format!("{}:branch:{}", worktree.store, worktree.branch)
-                            })
-                    })
-                } {
-                    return Ok(serde_json::to_value(
-                        workspace.resolve_knowledge_mapping_conflict(
-                            id,
-                            if_match,
-                            if_shared,
-                            match take {
-                                mapping_commands::ConflictChoice::Local => {
-                                    lore_local::ConflictResolutionChoice::Local
-                                }
-                                mapping_commands::ConflictChoice::Shared => {
-                                    lore_local::ConflictResolutionChoice::Shared
-                                }
-                            },
-                            actor,
-                        )?,
-                    )?);
+                if remote.is_some() || local_store.is_some() || store.is_some() {
+                    return Err(sync_commands::retired());
                 }
-                let target = sync_commands::select(
-                    &workspace,
-                    &data_home,
-                    remote.as_deref(),
-                    local_store.as_deref(),
-                )?;
-                return Ok(serde_json::to_value(workspace.resolve_mapping_conflict(
-                    target.client.as_ref(),
-                    &lore_core::SharedMappingKey {
-                        store: target.store,
-                        mapping: id.clone(),
-                    },
-                    if_match,
-                    if_shared,
-                    match take {
-                        mapping_commands::ConflictChoice::Local => {
-                            lore_local::ConflictResolutionChoice::Local
-                        }
-                        mapping_commands::ConflictChoice::Shared => {
-                            lore_local::ConflictResolutionChoice::Shared
-                        }
-                    },
-                    actor,
-                )?)?);
+                return Ok(serde_json::to_value(
+                    workspace.resolve_knowledge_mapping_conflict(
+                        id,
+                        if_match,
+                        if_shared,
+                        match take {
+                            mapping_commands::ConflictChoice::Local => {
+                                lore_local::ConflictResolutionChoice::Local
+                            }
+                            mapping_commands::ConflictChoice::Shared => {
+                                lore_local::ConflictResolutionChoice::Shared
+                            }
+                        },
+                        actor,
+                    )?,
+                )?);
             }
-            if (remote.is_some() || local_store.is_some())
+            if (remote.is_some() || local_store.is_some() || store.is_some())
                 && matches!(
                     command,
                     mapping_commands::MapOperation::Catalog { .. }
                         | mapping_commands::MapOperation::Publish { .. }
+                        | mapping_commands::MapOperation::Fetch { .. }
                 )
             {
-                return Err(Error::invalid(
-                    "Use push for Lore remotes; legacy catalogs are configured separately",
-                ));
-            }
-            if let mapping_commands::MapOperation::Fetch {
-                id,
-                max_age_seconds,
-            } = command
-                && (remote.is_some() || local_store.is_some())
-            {
-                if max_age_seconds.is_some() {
-                    return Err(Error::invalid(
-                        "--max-age-seconds is supported only by the legacy catalog; remote fetch refreshes explicitly",
-                    ));
-                }
-                return sync_commands::fetch(
-                    &workspace,
-                    &data_home,
-                    remote.as_deref(),
-                    local_store.as_deref(),
-                    id.as_ref(),
-                );
-            }
-            if store.is_some()
-                && matches!(
-                    command,
-                    mapping_commands::MapOperation::Fetch { .. }
-                        | mapping_commands::MapOperation::Catalog { .. }
-                        | mapping_commands::MapOperation::Publish { .. }
-                )
-            {
-                return Err(Error::invalid(
-                    "--store selects local mapping state; use --remote for fetch or push for publication",
-                ));
+                return Err(sync_commands::retired());
             }
             mapping_commands::execute(&workspace, &data_home, actor, command)
         }

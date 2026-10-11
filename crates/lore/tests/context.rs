@@ -349,7 +349,7 @@ fn scope_installation_is_worktree_specific_but_session_deduplication_is_shared()
     s.git(&["worktree", "add", "-qb", "peer", peer.to_str().unwrap()]);
     parse(s.command(&peer, &["init"]).output().unwrap());
     s.shared_scope(PAGE);
-    assert!(
+    assert_eq!(
         parse(
             s.command(&peer, &["context", "discover", "src/scheduler/plan.rs"])
                 .output()
@@ -357,7 +357,9 @@ fn scope_installation_is_worktree_specific_but_session_deduplication_is_shared()
         )["documents"]
             .as_array()
             .unwrap()
-            .is_empty()
+            .len(),
+        1,
+        "Accepted knowledge is discoverable before installation"
     );
     let result = parse(
         s.command(
@@ -502,9 +504,9 @@ fn session_start_prepares_worktrees_and_shared_discovery_does_not_expose_drafts(
         s.introduce(&peer, "fresh", "8", "src/scheduler/plan.rs")
             .is_empty()
     );
-    s.ok(&["map", "publish", id, "--if-match", revision]);
+    s.publish_mapping(&shared);
     let published_state = s.ok(&["status"]);
-    s.ok(&["map", "publish", id, "--if-match", revision]);
+    s.ok(&["push"]);
     assert_eq!(
         s.ok(&["status"]),
         published_state,
@@ -540,29 +542,7 @@ fn session_start_prepares_worktrees_and_shared_discovery_does_not_expose_drafts(
         1,
         "Local archive does not change shared discovery"
     );
-    let conflict = s
-        .command(
-            &s.repo,
-            &[
-                "map",
-                "publish",
-                id,
-                "--if-match",
-                draft["revision"].as_str().unwrap(),
-            ],
-        )
-        .output()
-        .unwrap();
-    assert_eq!(conflict.status.code(), Some(3));
-    s.ok(&[
-        "map",
-        "publish",
-        id,
-        "--if-match",
-        draft["revision"].as_str().unwrap(),
-        "--if-shared",
-        revision,
-    ]);
+    s.publish_mapping(&draft);
     assert!(
         parse(
             s.command(&peer, &["context", "discover", "src/scheduler/plan.rs"])
@@ -579,13 +559,7 @@ fn session_start_prepares_worktrees_and_shared_discovery_does_not_expose_drafts(
 fn a_worktree_created_mid_session_is_prepared_from_structured_tool_workdir() {
     let s = Setup::new();
     let mapping = s.scoped(PAGE);
-    s.ok(&[
-        "map",
-        "publish",
-        mapping["record"]["mapping"]["id"].as_str().unwrap(),
-        "--if-match",
-        mapping["revision"].as_str().unwrap(),
-    ]);
+    s.publish_mapping(&mapping);
     let peer = s.temp.path().join("mid-session");
     s.git(&["worktree", "add", "-qb", "mid", peer.to_str().unwrap()]);
     let mut event = s.event("worktree-session");

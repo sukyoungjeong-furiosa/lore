@@ -15,7 +15,7 @@ Lore는 코드에 연결된 지식을 찾는 도구다. `--repo`에는 현재 �
 lore --repo <checkout> --json context discover <file-or-directory>
 ```
 
-Discovery는 공유 인덱스와 로컬 변경을 조회하며, 외부 문서의 본문 가져오기나 Projection은 수행하지 않는다. Lore가 소유한 원격 문서는 Fetch에서 본문도 캐시될 수 있다. 필요한 인덱스는 원격에서 가져올 수 있다. `--cached`는 네트워크 요청을 금지하며, `warnings`가 있으면 탐색 범위가 불완전할 수 있다.
+Discovery는 로컬 중앙·작업 상태와 연결된 remote의 지식을 조회하며, 외부 문서의 본문 가져오기나 Projection은 수행하지 않는다. Lore가 소유한 원격 문서는 Fetch에서 본문도 캐시될 수 있다. 필요한 인덱스는 원격에서 가져올 수 있다. `--cached`는 네트워크 요청을 금지하며, `warnings`가 있으면 탐색 범위가 불완전할 수 있다.
 
 자동 소개는 세션당 문서별 최대 한 번이다. 명시적 탐색과 읽기는 언제든 가능하다.
 
@@ -39,7 +39,7 @@ lore --repo <checkout> --json --central show <local-document-id>
 
 ## 코드 연결 유지
 
-파일 범위는 glob, 특정 코드 위치는 Anchor로 연결한다. 연결 이유에는 사실·추론·적용 조건을 구분해 적는다. 매핑 변경은 외부 문서를 수정하지 않는다.
+파일 범위는 glob, 특정 코드 위치는 Anchor로 연결한다. 연결 이유에는 사실·추론·적용 조건을 구분해 적는다. 매핑 변경은 문서를 수정하지 않는다. Lore-owned 문서는 backend에 `local`을 사용한다.
 
 ```bash
 lore --repo <checkout> --json --author agent map create <backend> <document-id> --glob 'src/scheduler/**' --context "스케줄러 설계 배경"

@@ -151,6 +151,11 @@ impl Workspace {
         }
         let store = self.document_store(&state)?.unwrap();
         let committed = store.commit(baseline.as_ref(), &DocumentBundle { revisions })?;
+        state
+            .local_store
+            .as_ref()
+            .unwrap()
+            .register(&[], &["local".into()])?;
         self.cache_document_bundle(&store.read(id, None)?)?;
         state.documents.insert(
             id.clone(),

@@ -395,35 +395,10 @@ impl Server {
                 }
                 Ok(StoreResponse::Mapping { bundle })
             }
-            StoreRequest::Publish { request } => {
-                request.validate()?;
-                let descriptor = self.descriptor(principal, &request.bundle.store)?;
-                for view in &request.bundle.revisions {
-                    descriptor.validate_mapping(&view.record.mapping)?;
-                    Self::mapping_access(principal, &descriptor.id, &view.record.mapping, true)?;
-                }
-                match self.storage.read(
-                    &descriptor.id,
-                    &request.bundle.head()?.record.mapping.id,
-                    None,
-                ) {
-                    Ok(current) => Self::mapping_access(
-                        principal,
-                        &descriptor.id,
-                        &current.head()?.record.mapping,
-                        true,
-                    )?,
-                    Err(error) if error.kind == ErrorKind::NotFound => {}
-                    Err(error) => return Err(error),
-                }
-                Ok(StoreResponse::Published {
-                    receipt: self.storage.publish(
-                        &self.stores[&descriptor.id],
-                        &principal.name,
-                        &request,
-                    )?,
-                })
-            }
+            StoreRequest::Publish { .. } => Err(Error::new(
+                ErrorKind::Unsupported,
+                "Mapping-only publication is retired; submit and integrate a knowledge proposal through /v1/knowledge",
+            )),
         }
     }
 }
