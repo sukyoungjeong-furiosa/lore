@@ -39,22 +39,29 @@ impl Workspace {
                 "Run lore init before exporting mappings",
             )
         })?;
-        let mut counts = BTreeMap::new();
+        let mut sources = BTreeMap::<_, Vec<_>>::new();
         for item in self.list_scoped_mappings(true)? {
-            *counts.entry(item.view.record.mapping.id).or_insert(0usize) += 1;
+            sources
+                .entry(item.view.record.mapping.id)
+                .or_default()
+                .push(item.store);
         }
         let mut mappings = BTreeMap::new();
         for id in ids {
-            if counts.get(id).is_some_and(|count| *count > 1) {
+            let candidates = sources.get(id).ok_or_else(|| {
+                Error::new(
+                    ErrorKind::NotFound,
+                    "Mapping is not in the selected knowledge view",
+                )
+            })?;
+            if candidates.len() > 1 {
                 return Err(Error::new(
                     ErrorKind::Conflict,
                     "Mapping ID exists in several stores; select --store explicitly",
                 ));
             }
             let view = self.read_mapping(id, None)?;
-            let store = self
-                .mapping_store_for(id)?
-                .unwrap_or_else(|| local.store.clone());
+            let store = candidates[0].clone().unwrap_or_else(|| local.store.clone());
             let revisions = self.mapping_history(id)?;
             if revisions.first().map(|r| &r.revision) != Some(&view.revision) {
                 return Err(Error::new(

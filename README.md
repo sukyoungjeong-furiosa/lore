@@ -114,7 +114,7 @@ Export follows the selected knowledge view: `--central` exports accepted mapping
 
 Import validates the artifact against the checkout's code repository identity and records working changes. It does not authenticate to Notion, commit, or publish. Repeating an import is idempotent. Updates require the same source store, descendant source history, and unchanged local content; a conflict rejects the entire batch. A mapping omitted from a later artifact remains installed; archive it explicitly to distribute retirement. Import baselines belong to the destination store and working branch; local commit normalization does not change them.
 
-Keep the target code repository identity, backend roots, and discovery settings alongside the mapping file in the sharing repository. Installation instructions should pin a Lore commit and provision credentials on each machine. Review import results, then commit and Push to make mappings available to central discovery in the editor and hooks.
+Keep the target code repository identity, backend roots, and discovery settings alongside the mapping file in the sharing repository. Installation instructions should pin a Lore commit and provision credentials on each machine. Commit each imported or updated mapping using its returned revision, then Push to make it available to central discovery in the editor and hooks. Existing mappings without an artifact baseline accept an identical first import; a different version is rejected even when its history includes the local revision.
 
 ## Documentation
 
