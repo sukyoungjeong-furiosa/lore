@@ -32,6 +32,14 @@ Lore distinguishes working commits, change proposals, and accepted central knowl
 - Baselines are scoped to the local store, repository, and remote connection. Foreign version tokens or matching object IDs do not establish a common ancestor.
 - External document fetch and editing follow the owning backend's contract independently of knowledge synchronization.
 
+## Mapping Artifacts
+
+- An artifact carries selected external-document mappings and complete source revision chains, independently of the transport used to distribute its file. Source stores remain identified; copying a mapping does not establish shared local knowledge history.
+- Import validates the whole selection before activating working revisions. Repetition is idempotent. Updates require descendant history from the same source and local content unchanged since the preceding import, even when local commits normalize revision parents.
+- Import baselines belong to the destination store and knowledge working branch. Changing branches neither advances nor discards another branch's baseline.
+- Conflicts preserve working state. Import does not commit, integrate, retrieve external documents, or remove mappings omitted from the artifact. Archived revisions can be distributed explicitly.
+- Artifacts preserve captured anchors and can contain full source files and historical explanatory context. Document bodies, credentials, workspace paths, and projections are excluded.
+
 ## Code Reconciliation
 
 An optional worker may propose correspondence to a canonical code revision through [code projection](code-projection.md), preserving the original anchor identity and the actual target revision. This is separate from integration; unresolved correspondence or worker unavailability does not prevent submission or conflict-free integration. Code reconciliation neither rewrites document content nor resolves semantic contradictions between documents.

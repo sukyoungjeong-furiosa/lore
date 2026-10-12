@@ -98,6 +98,24 @@ Remote submission requires `--document`, `--mapping-id`, or explicit `--all`. To
 
 Earlier mapping-only catalogs and `push <mapping-id>` remain compatibility operations. Use the commit/proposal workflow for new knowledge sharing.
 
+## Mapping Artifacts
+
+External-document mappings can be shared as JSON files through a separate Git repository without a Lore server. Configure the same backend identity on each machine and authenticate to the document source independently.
+
+```bash
+lore --central map export --all --output mappings.json
+# Or select mappings with repeated --mapping-id <id> instead of --all.
+lore --json map import --input mappings.json
+lore commit <mapping-id> --mapping --if-match <returned-revision>
+lore push
+```
+
+Export follows the selected knowledge view: `--central` exports accepted mappings; omitting it includes working changes. Artifacts preserve source store identities, mapping IDs, original anchors, scopes, and complete revision histories, including archived mappings. They contain captured code files and historical mapping context, but no document bodies or credentials. Use a private repository when these are confidential. Lore-owned document references are rejected; use knowledge sharing for those documents. Files are limited to 64 MiB.
+
+Import validates the artifact against the checkout's code repository identity and records working changes. It does not authenticate to Notion, commit, or publish. Repeating an import is idempotent. Updates require the same source store, descendant source history, and unchanged local content; a conflict rejects the entire batch. A mapping omitted from a later artifact remains installed; archive it explicitly to distribute retirement. Import baselines belong to the destination store and working branch; local commit normalization does not change them.
+
+Keep the target code repository identity, backend roots, and discovery settings alongside the mapping file in the sharing repository. Installation instructions should pin a Lore commit and provision credentials on each machine. Commit each imported or updated mapping using its returned revision, then Push to make it available to central discovery in the editor and hooks. Existing mappings without an artifact baseline accept an identical first import; a different version is rejected even when its history includes the local revision.
+
 ## Documentation
 
 - [Technical Overview (한국어)](docs/design.md)
