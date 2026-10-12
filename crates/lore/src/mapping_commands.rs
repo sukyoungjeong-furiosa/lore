@@ -5,7 +5,12 @@ use lore_core::{
 use lore_local::{LocatedMapping, Workspace};
 use lore_resolver::{ChatProposer, ModelResolver};
 use serde_json::{Value, json};
-use std::path::{Path, PathBuf};
+use std::{
+    io::{Read, Write},
+    path::{Path, PathBuf},
+};
+
+const MAX_ARTIFACT_BYTES: u64 = 64 * 1024 * 1024;
 
 #[derive(Clone, Copy, ValueEnum)]
 pub enum ResolverKind {
@@ -21,6 +26,21 @@ pub enum ConflictChoice {
 
 #[derive(Subcommand)]
 pub enum MapOperation {
+    /// Export selected external-document mappings, including captured code and revision history.
+    Export {
+        #[arg(long, required_unless_present = "all", conflicts_with = "all")]
+        mapping_id: Vec<MappingId>,
+        /// Select all mappings in the current knowledge view, including archived mappings.
+        #[arg(long)]
+        all: bool,
+        #[arg(long)]
+        output: PathBuf,
+    },
+    /// Apply mapping history to working state; local edits and divergent updates are conflicts.
+    Import {
+        #[arg(long)]
+        input: PathBuf,
+    },
     /// Resolve a conflict in the default local store, or select a store connection explicitly.
     ResolveConflict {
         id: MappingId,
@@ -280,6 +300,51 @@ pub fn execute(
     command: &MapOperation,
 ) -> Result<Value> {
     match command {
+        MapOperation::Export {
+            mapping_id,
+            all,
+            output,
+        } => {
+            let ids = if *all {
+                workspace
+                    .list_scoped_mappings(true)?
+                    .into_iter()
+                    .map(|item| item.view.record.mapping.id)
+                    .collect()
+            } else {
+                mapping_id.clone()
+            };
+            let artifact = workspace.export_mapping_artifact(&ids)?;
+            let bytes = serde_json::to_vec_pretty(&artifact)?;
+            if bytes.len() as u64 > MAX_ARTIFACT_BYTES {
+                return Err(Error::invalid(
+                    "Mapping artifact exceeds 64 MiB; export smaller selections",
+                ));
+            }
+            let parent = output
+                .parent()
+                .filter(|p| !p.as_os_str().is_empty())
+                .unwrap_or(Path::new("."));
+            let mut file = tempfile::NamedTempFile::new_in(parent)?;
+            file.write_all(&bytes)?;
+            file.as_file().sync_all()?;
+            file.persist(output)
+                .map_err(|error| Error::from(error.error))?;
+            Ok(
+                json!({"output":output,"repository":artifact.repository,"mappings":artifact.mappings.len()}),
+            )
+        }
+        MapOperation::Import { input } => {
+            let mut bytes = vec![];
+            std::fs::File::open(input)?
+                .take(MAX_ARTIFACT_BYTES + 1)
+                .read_to_end(&mut bytes)?;
+            if bytes.len() as u64 > MAX_ARTIFACT_BYTES {
+                return Err(Error::invalid("Mapping artifact exceeds 64 MiB"));
+            }
+            let artifact: lore_core::MappingArtifact = serde_json::from_slice(&bytes)?;
+            Ok(json!({"results":workspace.import_mapping_artifact(&artifact)?}))
+        }
         MapOperation::ResolveConflict { .. } => unreachable!(),
         MapOperation::Catalog { .. }
         | MapOperation::Fetch { .. }

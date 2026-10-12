@@ -372,7 +372,8 @@ fn execute(cli: &Cli) -> Result<Value> {
         mapping_commands::MapOperation::Create { .. } | mapping_commands::MapOperation::Edit { .. }
         | mapping_commands::MapOperation::Attach { .. } | mapping_commands::MapOperation::Archive { .. }
         | mapping_commands::MapOperation::Restore { .. } | mapping_commands::MapOperation::Publish { .. }
-        | mapping_commands::MapOperation::Install { .. } | mapping_commands::MapOperation::ResolveConflict { .. }))
+        | mapping_commands::MapOperation::Install { .. } | mapping_commands::MapOperation::Import { .. }
+        | mapping_commands::MapOperation::ResolveConflict { .. }))
     {
         return Err(Error::invalid(
             "Central knowledge is read-only; edit mappings on a working branch",
@@ -390,6 +391,7 @@ fn execute(cli: &Cli) -> Result<Value> {
                 && !matches!(
                     command,
                     mapping_commands::MapOperation::Ls { .. }
+                        | mapping_commands::MapOperation::Export { .. }
                         | mapping_commands::MapOperation::Show { .. }
                         | mapping_commands::MapOperation::History { .. }
                         | mapping_commands::MapOperation::Resolve { .. }

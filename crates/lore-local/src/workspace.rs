@@ -31,6 +31,10 @@ pub struct WorkspaceState {
     pub documents: BTreeMap<DocumentId, ActiveDocument>,
     #[serde(default)]
     pub mappings: BTreeMap<lore_core::MappingId, ActiveDocument>,
+    /// Import baselines keyed by destination store and knowledge working branch.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub mapping_artifact_baselines:
+        BTreeMap<String, BTreeMap<lore_core::MappingId, crate::MappingArtifactBaseline>>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub store_mappings:
         BTreeMap<lore_core::KnowledgeStoreId, BTreeMap<lore_core::MappingId, ActiveDocument>>,
@@ -223,6 +227,7 @@ impl Workspace {
                 store: directory,
                 documents: BTreeMap::new(),
                 mappings: BTreeMap::new(),
+                mapping_artifact_baselines: BTreeMap::new(),
                 store_mappings: BTreeMap::new(),
                 connected_remotes: BTreeMap::new(),
                 local_store: None,
